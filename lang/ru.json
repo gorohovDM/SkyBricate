@@ -1,0 +1,7 @@
+{"SKYBRICATE":{"Compatibility":{
+  "dependency":"SkyBricate отключён: необходимо включить Fabricate.",
+  "version":"SkyBricate отключён: изучена только версия Fabricate 1.9.10.",
+  "foundry":"SkyBricate отключён: каркас предназначен для Foundry VTT 13–14.",
+  "api":"SkyBricate отключён: необходимые API Fabricate недоступны.",
+  "initialization":"SkyBricate отключён: инициализация Fabricate завершилась ошибкой."
+}}}

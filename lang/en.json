@@ -1,0 +1,7 @@
+{"SKYBRICATE":{"Compatibility":{
+  "dependency":"SkyBricate is disabled: Fabricate must be active.",
+  "version":"SkyBricate is disabled: only Fabricate 1.9.10 has been studied.",
+  "foundry":"SkyBricate is disabled: this scaffold targets Foundry VTT 13–14.",
+  "api":"SkyBricate is disabled: required Fabricate APIs are unavailable.",
+  "initialization":"SkyBricate is disabled: Fabricate initialization failed."
+}}}
