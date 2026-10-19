@@ -4,4 +4,14 @@
   "foundry":"SkyBricate is disabled: this scaffold targets Foundry VTT 13–14.",
   "api":"SkyBricate is disabled: required Fabricate APIs are unavailable.",
   "initialization":"SkyBricate is disabled: Fabricate initialization failed."
+},"Editor":{
+  "Title":"SkyBricate · Property catalog",
+  "Shared":"This catalog is shared by all crafting systems. Changes apply to the whole world.",
+  "Create":"New property", "Edit":"Edit", "Delete":"Delete", "ConfirmDelete":"Delete from all systems",
+  "DeleteWarning":"Delete this property and clear its category, component and rule-order references in ALL systems?",
+  "Cancel":"Cancel", "Save":"Save", "Name":"Name", "Description":"Description", "Refresh":"Reload catalog",
+  "Saving":"Saving…", "Saved":"Saved.", "Error":"Could not complete the operation:",
+  "NameRequired":"Enter a property name.", "Missing":"This property no longer exists. Reload the catalog.",
+  "Unavailable":"This editor context is no longer available. Reopen alchemy settings.",
+  "Contract":"SkyBricate: unsupported Fabricate editor structure. The property panel is disabled; no editor writes were made."
 }}}

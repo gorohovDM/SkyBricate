@@ -1,9 +1,10 @@
 import { DataStore, registerDataSetting } from "./data-store.js";
+import { installManagerAdapter } from "./manager-adapter.js";
 
 export const MODULE_ID = "skybricate";
 export const FABRICATE_VERSION = "1.9.10";
 
-// No providers or crafting adapters are registered by the scaffold.
+// Gameplay providers and crafting adapters belong to later stages.
 export function checkCompatibility(game) {
   const dependency = game.modules?.get("fabricate");
   if (!dependency?.active) return "dependency";
@@ -40,10 +41,13 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
       const problem = checkCompatibility(getGame());
       if (problem) return fail(problem);
       const module = getGame().modules.get(MODULE_ID);
-      if (module) module.api = Object.freeze({ data: new DataStore({ getGame }) });
+      const data = new DataStore({ getGame });
+      if (module) module.api = Object.freeze({ data });
+      if (getGame().user?.isGM) installManagerAdapter({ hooks, getGame, data, notifications,
+        compatible: () => checkCompatibility(getGame()) === null });
       terminal = true;
       status.ready = true;
-      logger.info("SkyBricate | Data layer ready; gameplay features are not implemented.");
+      logger.info("SkyBricate | Property editor ready; gameplay features are not implemented.");
     }).catch(() => fail("initialization"));
   };
   hooks.once("init", () => registerDataSetting(getGame().settings));
