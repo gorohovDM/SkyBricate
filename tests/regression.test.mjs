@@ -8,6 +8,7 @@ import { build, ROOT, RUNTIME_FILES } from "../tools/build.mjs";
 import { DataStore, registerDataSetting } from "../scripts/data-store.js";
 import { emptyData, emptySystem } from "../scripts/data-model.js";
 import "./editor-regressions.mjs";
+import "./assignment-regressions.mjs";
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function fixture() {
@@ -68,8 +69,8 @@ test("manager hooks are registered only for GM after readiness and compatibility
     assert.equal(f.hooks.count("renderApplicationV2"), 0);
     f.hooks.fire("ready"); await flush(); assert.equal(f.hooks.count("renderApplicationV2"), 0);
     f.finish(); await flush();
-    assert.equal(f.hooks.count("renderApplicationV2"), isGM ? 1 : 0);
-    assert.equal(f.hooks.count("closeApplicationV2"), isGM ? 1 : 0);
+    assert.equal(f.hooks.count("renderApplicationV2"), isGM ? 2 : 0);
+    assert.equal(f.hooks.count("closeApplicationV2"), isGM ? 2 : 0);
   }
   const f = fixture(); f.game.modules.get("fabricate").version = "2.0.0";
   f.finish(); f.hooks.fire("ready"); await flush(); assert.equal(f.hooks.count("renderApplicationV2"), 0);
@@ -94,7 +95,7 @@ test("release ZIP is reproducible, exact allowlist and manifest paths exist", as
   const out = await mkdtemp(resolve(tmpdir(), "skybricate-build-")); t.after(() => rm(out, { recursive: true, force: true }));
   const first = await build({ out }); const second = await build({ out }); assert.deepEqual(first.archive, second.archive);
   const entries = unzipStored(await readFile(resolve(out, "skybricate.zip")));
-  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
+  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
   for (const [path, data] of entries) assert.deepEqual(data, await readFile(resolve(ROOT, path)));
   const manifest = JSON.parse(entries.get("module.json"));
   assert.deepEqual(await readFile(resolve(out, "module.json")), entries.get("module.json"));
@@ -125,7 +126,10 @@ test("build rejects missing runtime files, excluded paths and version drift", as
 function storageFixture(initial) {
   let persisted = structuredClone(initial), writes = 0, nextId = 0, rejectSave = false;
   const registrations = [];
-  const game = { user: { isGM: true }, settings: {
+  const game = { user: { isGM: true }, fabricate: { getCraftingSystemManager: () => ({ componentAssignmentContract: {
+    version: 'fabricate-component-assignments-v1', deletedHook: 'fabricate.componentsDeleted',
+    readPersistedSystem: systemId => ({ systemId, complete: true, componentIds: ['rare-mushroom', 'special', 'item', 'b', 'component'] })
+  } }) }, settings: {
     register: (...args) => registrations.push(args),
     get(namespace, key) { assert.equal(namespace, "skybricate"); assert.equal(key, "data"); return persisted; },
     async set(namespace, key, data) {

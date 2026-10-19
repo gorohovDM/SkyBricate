@@ -17,3 +17,12 @@
 }
 .skybricate-property-panel [data-property-id] { overflow-wrap: anywhere; }
 .skybricate-property-panel[aria-busy="true"] { cursor: progress; }
+.skybricate-assignment-panel .skybricate-controls {
+  border: 0; padding: 0; margin: 0; min-width: 0;
+  display: flex; flex-wrap: wrap; gap: var(--fab-space-2, 8px);
+}
+.skybricate-assignment-panel .manager-component-tag-run { width: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+.skybricate-property-toggle { width: auto; max-width: 100%; overflow-wrap: anywhere; border-radius: 12px; }
+.skybricate-property-toggle[aria-pressed="true"] { background: var(--fab-accent); color: var(--fab-text-on-accent, white); }
+.skybricate-assignment-panel p, .skybricate-sync { overflow-wrap: anywhere; }
+.skybricate-sync { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; }

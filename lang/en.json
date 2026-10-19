@@ -35,7 +35,18 @@
       "LegacyWarning": "SkyBricate schema 1 contains old test data with a shared catalog. It cannot be edited in this version. Migration is not provided.",
       "Reset": "Reset old test data",
       "ResetWarning": "Permanently delete ALL old SkyBricate test properties, assignments and rules in this world? Only skybricate.data is reset. Fabricate data is not affected.",
-      "ConfirmReset": "Delete old test data and start empty"
+      "ConfirmReset": "Delete old test data and start empty",
+      "AssignmentHint": "Save SkyBricate properties separately. Save native component fields with Fabricate. Unsaved property selections are discarded when changing component, system, tab or closing. Reload discards your selection.",
+      "ComponentProperties": "Component properties",
+      "SaveProperties": "Save properties",
+      "ReloadAssignments": "Reload properties",
+      "AssignmentEmpty": "No properties in this system. Create them in Tags & Categories → SkyBricate properties.",
+      "AssignmentUnavailable": "This component editor is no longer available. Reopen the component.",
+      "AssignmentContract": "SkyBricate assignments are disabled: install the Fabricate 1.9.10 component assignments v1 patch; the component form and full persisted snapshot must support this contract.",
+      "ReconcileAssignments": "Reconcile saved assignments",
+      "SyncHint": "Reconcile assignments with the complete saved component list to recover missed deletions. Several GMs use last-write-wins.",
+      "SyncError": "Fabricate deletion was saved, but SkyBricate assignments may be out of sync. Use Reconcile saved assignments to retry.",
+      "Reconciled": "Saved assignments reconciled."
     }
   }
 }

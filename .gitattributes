@@ -1,3 +1,5 @@
 *.js text eol=lf
 *.mjs text eol=lf
 *.json text eol=lf
+# Keep the delivered patch byte identity stable under Windows Git checkouts.
+patches/*.patch text eol=lf whitespace=-blank-at-eol
