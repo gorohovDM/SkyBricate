@@ -1,9 +1,9 @@
 import { readFile, mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = fileURLToPath(new URL("../", import.meta.url));
-export const RUNTIME_FILES = Object.freeze(["module.json", "scripts/main.js", "lang/en.json", "lang/ru.json"]);
+export const RUNTIME_FILES = Object.freeze(["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "lang/en.json", "lang/ru.json"]);
 
 function crc32(data) {
   let crc = 0xffffffff;
@@ -64,6 +64,12 @@ export async function build({ root = ROOT, out = resolve(root, "dist") } = {}) {
     if (!RUNTIME_FILES.includes(path)) throw new Error(`Manifest path is not packaged: ${path}`);
   }
   for (const [path, data] of entries) if (path.endsWith(".json")) JSON.parse(data.toString());
+  for (const [path, data] of entries.filter(([path]) => path.endsWith(".js"))) {
+    for (const match of data.toString().matchAll(/\b(?:import|export)\s+(?:[^;"']*?\s+from\s*)?["']([^"']+)["']/g)) {
+      const target = posix.normalize(posix.join(posix.dirname(path), match[1]));
+      if (!match[1].startsWith(".") || !RUNTIME_FILES.includes(target)) throw new Error(`Import is not packaged: ${match[1]}`);
+    }
+  }
   const archive = createZip(entries);
   await mkdir(out, { recursive: true });
   await writeFile(resolve(out, "skybricate.zip"), archive);
@@ -73,5 +79,5 @@ export async function build({ root = ROOT, out = resolve(root, "dist") } = {}) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await build();
-  console.log("Built dist/skybricate.zip and dist/module.json (4 runtime files).");
+  console.log(`Built dist/skybricate.zip and dist/module.json (${RUNTIME_FILES.length} runtime files).`);
 }

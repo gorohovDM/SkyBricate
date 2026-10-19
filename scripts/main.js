@@ -1,3 +1,5 @@
+import { DataStore, registerDataSetting } from "./data-store.js";
+
 export const MODULE_ID = "skybricate";
 export const FABRICATE_VERSION = "1.9.10";
 
@@ -37,11 +39,14 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
     Promise.resolve().then(() => fabricate.whenReady()).then(() => {
       const problem = checkCompatibility(getGame());
       if (problem) return fail(problem);
+      const module = getGame().modules.get(MODULE_ID);
+      if (module) module.api = Object.freeze({ data: new DataStore({ getGame }) });
       terminal = true;
       status.ready = true;
-      logger.info("SkyBricate | Scaffold ready; gameplay features are not implemented.");
+      logger.info("SkyBricate | Data layer ready; gameplay features are not implemented.");
     }).catch(() => fail("initialization"));
   };
+  hooks.once("init", () => registerDataSetting(getGame().settings));
   hooks.once("ready", () => { foundryReady = true; attempt(); });
   hooks.on("fabricate.ready", attempt);
   return status;
