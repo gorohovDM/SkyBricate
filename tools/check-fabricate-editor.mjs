@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { compile } from "svelte/compiler";
 import { emptyData } from "../scripts/data-model.js";
 import { managerFixture, settleDOM } from "../tests/helpers/manager-fixture.mjs";
+import { verifyFabricatePatch } from './build-fabricate.mjs';
 
 const upstream = resolve(process.argv[2] ?? ".reference/fabricate");
 assert.equal(execFileSync("git", ["-C", upstream, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
@@ -37,7 +38,10 @@ try {
   await prepare("src/ui/svelte/apps/manager/TagsCategoriesView.svelte");
   const contractFiles = ["src/ui/SvelteCraftingSystemManagerApp.svelte.js", "src/ui/svelte/SvelteApplicationMixinCore.js",
     "src/ui/svelte/stores/adminStore.js", "src/ui/svelte/stores/adminSystemInspectorProjection.js", "src/ui/svelte/apps/manager/CraftingSystemManagerRoot.svelte"];
-  execFileSync("git", ["-C", upstream, "diff", "--exit-code", "HEAD", "--", ...copied, ...contractFiles]);
+  // The assignments patch changes the root only by passing its saved system ID.
+  // Exact patched-file hashes are verified; untouched vocabulary files stay pinned.
+  await verifyFabricatePatch(upstream);
+  execFileSync("git", ["-C", upstream, "diff", "--exit-code", "HEAD", "--", ...copied, ...contractFiles.slice(0, -1)]);
   const appSource = await readFile(resolve(upstream, contractFiles[0]), "utf8");
   assert(appSource.includes("id: 'fabricate-crafting-system-manager'")); assert(appSource.includes("_adminStore = null"));
   const mixin = await readFile(resolve(upstream, contractFiles[1]), "utf8");

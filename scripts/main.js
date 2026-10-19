@@ -1,5 +1,6 @@
 import { DataStore, registerDataSetting } from "./data-store.js";
 import { installManagerAdapter } from "./manager-adapter.js";
+import { installAssignmentAdapter } from './assignment-adapter.js';
 
 export const MODULE_ID = "skybricate";
 export const FABRICATE_VERSION = "1.9.10";
@@ -44,6 +45,8 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
       const data = new DataStore({ getGame });
       if (module) module.api = Object.freeze({ data });
       if (getGame().user?.isGM) installManagerAdapter({ hooks, getGame, data, notifications,
+        compatible: () => checkCompatibility(getGame()) === null });
+      if (getGame().user?.isGM) installAssignmentAdapter({ hooks, getGame, data, notifications,
         compatible: () => checkCompatibility(getGame()) === null });
       terminal = true;
       status.ready = true;

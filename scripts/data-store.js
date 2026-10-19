@@ -1,4 +1,5 @@
 import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, validateData, validateLegacyData } from "./data-model.js";
+import { persistedComponents } from './assignment-contract.js';
 
 export const SETTING_NAMESPACE = "skybricate";
 export const SETTING_KEY = "data";
@@ -121,8 +122,31 @@ export class DataStore {
     return this.#assign(systemId, "categories", categoryKey, propertyIds);
   }
 
-  setComponentProperties(systemId, componentId, propertyIds) {
-    return this.#assign(systemId, "components", componentId, propertyIds);
+  setComponentProperties(systemId, componentId, propertyIds, { canWrite = () => true } = {}) {
+    const ids = copy(propertyIds);
+    return this.#write(data => {
+      assertKey(componentId);
+      if (!canWrite() || !persistedComponents(this.#getGame(), systemId).has(componentId)) {
+        throw new Error('Component context is no longer available');
+      }
+      this.#system(data, systemId).components[componentId] = ids;
+    });
+  }
+
+  reconcileComponentProperties(systemId, componentIds = null, { canWrite = () => true } = {}) {
+    const requested = componentIds === null ? null : copy(componentIds);
+    return this.#write(data => {
+      if (!canWrite()) throw new Error('Component context is no longer available');
+      const present = persistedComponents(this.#getGame(), systemId);
+      if (requested !== null) {
+        if (!Array.isArray(requested)) throw new Error('Invalid deleted IDs');
+        requested.forEach(assertKey);
+      }
+      const assignments = data.systems[systemId]?.components;
+      for (const id of requested ?? Object.keys(assignments ?? {})) {
+        if (assignments && !present.has(id)) delete assignments[id];
+      }
+    });
   }
 
   renameCategory(systemId, oldKey, newKey) {
