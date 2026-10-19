@@ -1,20 +1,19 @@
-.skybricate-property-panel {
-  margin-block-start: 1rem;
-  padding: 1rem;
-  border: 1px solid currentColor;
-  border-radius: 0.5rem;
-  overflow-wrap: anywhere;
+/* Vocabulary layout/colors come from Fabricate 1.9.10's manager classes. */
+.fabricate-manager .skybricate-workspace[hidden],
+.fabricate-manager .manager-tags-categories-workspace[hidden] { display: none; }
+.skybricate-property-panel .skybricate-controls {
+  display: flex; flex-direction: column; gap: var(--fab-space-3, 12px);
+  border: 0; padding: 0; margin: 0; min-width: 0;
 }
-.skybricate-property-panel fieldset {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-.skybricate-property-panel label { display: grid; gap: 0.25rem; }
 .skybricate-property-panel p { white-space: pre-wrap; overflow-wrap: anywhere; }
-.skybricate-property-panel [data-property-id] {
-  padding-block: 0.5rem;
-  border-bottom: 1px solid currentColor;
+.skybricate-property-panel [role="status"]:empty { display: none; }
+/* Chip.svelte styles are scoped to that component; match its neutral tokens. */
+.skybricate-property-panel .manager-chip {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--fab-space-chip); width: fit-content; max-width: 100%; min-height: 20px;
+  padding: var(--fab-space-1) var(--fab-space-chip); border: 1px solid var(--fab-border);
+  border-radius: 10px; color: var(--fab-text); background: var(--fab-overlay-light-06);
+  font-size: 0.62rem; font-weight: 700; line-height: 1;
 }
-.skybricate-property-panel button { margin: 0.25rem; }
+.skybricate-property-panel [data-property-id] { overflow-wrap: anywhere; }
 .skybricate-property-panel[aria-busy="true"] { cursor: progress; }

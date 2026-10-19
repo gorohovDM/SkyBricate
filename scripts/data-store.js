@@ -1,4 +1,4 @@
-import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, validateData } from "./data-model.js";
+import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, validateData, validateLegacyData } from "./data-model.js";
 
 export const SETTING_NAMESPACE = "skybricate";
 export const SETTING_KEY = "data";
@@ -28,50 +28,74 @@ export class DataStore {
     return copy(data);
   }
 
-  #write(change) {
-    const operation = this.#tail.then(async () => {
+  #enqueue(operation) {
+    const queued = this.#tail.then(() => {
       const game = this.#getGame();
       if (!game.user?.isGM) throw new Error("SkyBricate writes require a GM");
+      return operation(game);
+    });
+    this.#tail = queued.catch(() => {});
+    return queued;
+  }
+
+  #write(change) {
+    return this.#enqueue(async game => {
       const data = this.getSnapshot();
       const result = change(data);
       validateData(data);
       await game.settings.set(SETTING_NAMESPACE, SETTING_KEY, copy(data));
       return copy(result);
     });
-    this.#tail = operation.catch(() => {});
-    return operation;
   }
 
-  createProperty(input) {
+  hasLegacyData() {
+    try {
+      validateLegacyData(this.#getGame().settings.get(SETTING_NAMESPACE, SETTING_KEY));
+      return true;
+    } catch { return false; }
+  }
+
+  resetLegacyData() {
+    return this.#enqueue(async game => {
+      // Check again when dequeued: never overwrite a newer schema or corrupt data.
+      validateLegacyData(game.settings.get(SETTING_NAMESPACE, SETTING_KEY));
+      await game.settings.set(SETTING_NAMESPACE, SETTING_KEY, emptyData());
+    });
+  }
+
+  createProperty(systemId, input) {
     const values = copy(input);
     return this.#write(data => {
       assertFields(values, ["name", "description"]);
+      const system = this.#system(data, systemId);
       const id = assertKey(this.#idFactory());
-      if (Object.hasOwn(data.properties, id)) throw new Error("Property ID collision");
-      data.properties[id] = { name: values.name, description: Object.hasOwn(values, "description") ? values.description : "" };
+      if (Object.hasOwn(system.properties, id)) throw new Error("Property ID collision");
+      system.properties[id] = { name: values.name, description: Object.hasOwn(values, "description") ? values.description : "" };
       return id;
     });
   }
 
-  updateProperty(id, patch) {
+  updateProperty(systemId, id, patch) {
     const values = copy(patch);
     return this.#write(data => {
-      requireProperty(data, id);
+      assertKey(systemId);
+      const system = data.systems[systemId];
+      requireProperty(system, id);
       assertFields(values, ["name", "description"]);
-      Object.assign(data.properties[id], values);
+      Object.assign(system.properties[id], values);
     });
   }
 
-  deleteProperty(id) {
+  deleteProperty(systemId, id) {
     return this.#write(data => {
-      requireProperty(data, id);
-      delete data.properties[id];
-      for (const system of Object.values(data.systems)) {
-        for (const assignments of [system.categories, system.components]) {
-          for (const key of Object.keys(assignments)) assignments[key] = assignments[key].filter(value => value !== id);
-        }
-        system.rules.propertyOrder = system.rules.propertyOrder.filter(value => value !== id);
+      assertKey(systemId);
+      const system = data.systems[systemId];
+      requireProperty(system, id);
+      delete system.properties[id];
+      for (const assignments of [system.categories, system.components]) {
+        for (const key of Object.keys(assignments)) assignments[key] = assignments[key].filter(value => value !== id);
       }
+      system.rules.propertyOrder = system.rules.propertyOrder.filter(value => value !== id);
     });
   }
 
