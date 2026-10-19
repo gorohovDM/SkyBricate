@@ -12,7 +12,8 @@ import { stockSources } from './fabricate-source.mjs';
 const { upstream, read: readStock } = stockSources(process.argv[2]);
 const cacheRoot = resolve("node_modules/.cache"); await mkdir(cacheRoot, { recursive: true });
 const temp = await mkdtemp(resolve(cacheRoot, "skybricate-contract-"));
-const f = managerFixture({ getSnapshot: emptyData });
+let assignmentOpens = 0;
+const f = managerFixture({ getSnapshot: emptyData }, { openAssignments: () => { assignmentOpens++; } });
 const copied = new Set();
 async function prepare(path) {
   if (copied.has(path)) return;
@@ -45,13 +46,16 @@ try {
   const projection = readStock(contractFiles[3]);
   assert(projection.includes("id: selectedSystem.id")); assert(projection.includes("resolutionMode: selectedSystem.resolutionMode || 'simple'"));
   const rootSource = readStock(contractFiles.at(-1));
+  const headerMarkup = '<div class="manager-header-actions" aria-label={headerActionsLabel()}>';
+  assert(rootSource.includes(headerMarkup));
   assert(rootSource.includes('onTabChange={(id) => (tagsActiveTab = id)}'));
   assert(rootSource.includes('activeTab={tagsActiveTab}'));
   const wrapper = `<script>
     import Tags from './src/ui/svelte/apps/manager/TagsCategoriesView.svelte.js';
     let { store, visible, nativeAdd } = $props(); const view = store.viewState;
     let active = $state('recipe');
-    </script>{#if $visible && $view.selectedSystem}<Tags activeTab={active} onTabChange={id => active = id} onAddCategory={nativeAdd} />{/if}`;
+    const headerActionsLabel = () => 'Actions';
+    </script>${headerMarkup}<button type="button">Native action</button></div>{#if $visible && $view.selectedSystem}<Tags activeTab={active} onTabChange={id => active = id} onAddCategory={nativeAdd} />{/if}`;
   await writeFile(resolve(temp, "Wrapper.js"), compile(wrapper, { filename: "Wrapper.svelte", generate: "client" }).js.code);
   const { mount, unmount, tick } = await import("svelte"), { writable } = await import("svelte/store");
   const { default: Wrapper } = await import(pathToFileURL(resolve(temp, "Wrapper.js")));
@@ -65,6 +69,8 @@ try {
   const nativeTab = id => f.root.querySelector(`[data-vocabulary-tab="${id}"]`);
   const key = (node, value) => node.dispatchEvent(new f.window.KeyboardEvent("keydown", { key: value, bubbles: true }));
   await settle(); f.render(); await settle();
+  const assignments = () => f.root.querySelector('[data-skybricate-assignments]');
+  assert(assignments()); assignments().click(); await settle(); assert.equal(assignmentOpens, 1);
   assert(ownTab()); assert.equal(f.panel(), null); assert.equal(f.root.querySelectorAll('[role="tab"]').length, 4);
   ownTab().click(); await settle(); assert.equal(f.panel()?.dataset.skybricatePanel, "a");
   assert.equal(nativeTab("recipe").getAttribute("aria-selected"), "false");
@@ -90,11 +96,13 @@ try {
   viewState.set({ selectedSystem: { id: "b", resolutionMode: "alchemy" } }); await settle();
   ownTab().click(); assert.equal(f.panel()?.dataset.skybricatePanel, "b");
   visible.set(false); await settle(); assert.equal(f.panel(), null); assert.equal(ownTab(), null);
+  assignments().click(); await settle(); assert.equal(assignmentOpens, 2);
   visible.set(true); await settle(); assert(ownTab(), JSON.stringify({warnings:f.warnings,html:f.root.innerHTML})); assert.equal(f.panel(), null);
   ownTab().click(); f.close(); await settle();
   assert.equal(f.root.querySelector('[role="tab"][aria-selected="true"]').dataset.vocabularyTab, "recipe");
   assert.equal(f.root.querySelector('[role="tabpanel"]').hidden, false);
   assert.equal(f.observerCount, 0); assert.equal(f.warnings.length, 0);
+  assert.equal(assignments(), null);
   await unmount(component);
   console.log("Fabricate 1.9.10 actual TagsCategoriesView + VocabularyPanel: native tabs/forms, 4-tab keyboard/ARIA, selection gap, navigation/rerender, restoration/close PASS.");
 } finally { f.destroy(); await rm(temp, { recursive: true, force: true }); }

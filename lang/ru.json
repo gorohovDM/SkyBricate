@@ -49,6 +49,8 @@
       "Reconciled": "Сохранённые назначения сверены.",
       "AssignmentsTitle": "Свойства компонентов SkyBricate",
       "OpenAssignments": "Открыть редактор назначений",
+      "PropertyAssignments": "Привязки свойств",
+      "OpenAssignmentsError": "Не удалось открыть привязки свойств SkyBricate. Попробуйте снова.",
       "AssignmentsMenuHint": "Назначение свойств сохранённым компонентам Fabricate в отдельном окне мастера.",
       "CraftingSystem": "Система крафта",
       "Component": "Компонент",

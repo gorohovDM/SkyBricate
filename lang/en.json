@@ -49,6 +49,8 @@
       "Reconciled": "Saved assignments reconciled.",
       "AssignmentsTitle": "SkyBricate component properties",
       "OpenAssignments": "Open assignments editor",
+      "PropertyAssignments": "Property assignments",
+      "OpenAssignmentsError": "Could not open SkyBricate property assignments. Please try again.",
       "AssignmentsMenuHint": "Assign properties to saved Fabricate components in a separate GM window.",
       "CraftingSystem": "Crafting system",
       "Component": "Component",

@@ -45,13 +45,15 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
       if (problem) return fail(problem);
       const module = getGame().modules.get(MODULE_ID);
       data = new DataStore({ getGame });
-      if (module) module.api = Object.freeze({ data, openAssignments: () => {
+      const openAssignments = () => {
         if (!AssignmentApplication || !getGame().user?.isGM || checkCompatibility(getGame()) !== null) {
           throw new Error('SkyBricate assignments are unavailable');
         }
         return new AssignmentApplication().render({ force: true });
-      } });
+      };
+      if (module) module.api = Object.freeze({ data, openAssignments });
       if (getGame().user?.isGM) installManagerAdapter({ hooks, getGame, data, notifications,
+        openAssignments,
         compatible: () => checkCompatibility(getGame()) === null });
       terminal = true;
       status.ready = true;
