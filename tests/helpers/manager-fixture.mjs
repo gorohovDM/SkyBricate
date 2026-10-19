@@ -1,14 +1,15 @@
 import { Window } from "happy-dom";
 import { installManagerAdapter } from "../../scripts/manager-adapter.js";
 
-// Minimal DOM emitted by Fabricate v1.9.10 CraftingSettingsView ->
-// ResolutionModeCard -> RadioCardGroup (SHA 5bf36dd). No invented systemId
-// DOM attribute: identity comes from selectedSystemId + viewState.selectedSystem.
-export function settingsMarkup(mode = "alchemy") {
-  return `<main data-crafting-settings><section data-crafting-resolution-section>
-    <fieldset data-crafting-resolution-mode><label><input type="radio" name="manager-crafting-resolution-mode" value="alchemy" ${mode === "alchemy" ? "checked" : ""}></label>
-    <label><input type="radio" name="manager-crafting-resolution-mode" value="simple" ${mode === "simple" ? "checked" : ""}></label></fieldset>
-    </section></main>`;
+// Minimal TagsCategoriesView 1.9.10 DOM; identity comes from stores, not DOM.
+export function vocabularyMarkup(active = "recipe") {
+  return '<main class="manager-main manager-tags-categories"><div class="manager-editor-tabs manager-vocabulary-tabs" role="tablist">'
+    + ["recipe", "component", "tag"].map(id => '<button type="button" role="tab" id="vocabulary-tab-' + id
+      + '" class="manager-editor-tab-button' + (id === active ? ' is-active' : '') + '" aria-selected="' + (id === active)
+      + '" aria-controls="vocabulary-panel-' + id + '" tabindex="' + (id === active ? 0 : -1)
+      + '" data-vocabulary-tab="' + id + '">' + id + '</button>').join('')
+    + '</div><div class="manager-tags-categories-workspace" role="tabpanel" id="vocabulary-panel-' + active
+    + '" aria-labelledby="vocabulary-tab-' + active + '"><p>Native vocabulary</p></div></main>';
 }
 export function readable(initial) {
   let value = initial;
@@ -26,11 +27,16 @@ export function hookBus() {
     count(name) { return handlers.get(name)?.size ?? 0; }
   };
 }
-export const settleDOM = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setTimeout(resolve, 5)); };
+const windows = new Set();
+export const settleDOM = async () => {
+  await Promise.resolve();
+  await Promise.all([...windows].map(window => window.happyDOM.waitUntilComplete()));
+  await Promise.resolve();
+};
 export function managerFixture(data, { isGM = true, mode = "alchemy", id = "a" } = {}) {
-  const window = new Window();
-  const root = window.document.createElement("div"); window.document.body.append(root);
-  root.innerHTML = settingsMarkup(mode);
+  const window = new Window(); windows.add(window);
+  const root = window.document.createElement("div"); root.className = "fabricate-manager"; window.document.body.append(root);
+  root.innerHTML = vocabularyMarkup();
   const selectedSystemId = readable(id), viewState = readable({ selectedSystem: { id, resolutionMode: mode } });
   const store = { selectedSystemId, viewState };
   const app = { options: { id: "fabricate-crafting-system-manager" }, element: root, _adminStore: store };
@@ -46,7 +52,9 @@ export function managerFixture(data, { isGM = true, mode = "alchemy", id = "a" }
     set compatible(value) { compatible = value; },
     get observerCallbacks() { return observerCallbacks; }, get observerCount() { return observerCount; },
     panel: () => root.querySelector("[data-skybricate-panel]"),
+    tab: () => root.querySelector("[data-skybricate-tab]"),
+    open() { root.querySelector("[data-skybricate-tab]")?.click(); },
     render() { hooks.fire("renderApplicationV2", app, root, {}); },
     close() { hooks.fire("closeApplicationV2", app); },
-    destroy() { dispose(); window.happyDOM.abort(); } };
+    destroy() { dispose(); windows.delete(window); window.happyDOM.abort(); } };
 }

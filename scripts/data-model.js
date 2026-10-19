@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 export const copy = value => structuredClone(value);
 
@@ -27,23 +27,23 @@ function exactFields(value, fields) {
 }
 
 export function emptyData() {
-  return { schemaVersion: SCHEMA_VERSION, properties: {}, systems: {} };
+  return { schemaVersion: SCHEMA_VERSION, systems: {} };
 }
 
 export function emptySystem() {
-  return { categories: {}, components: {}, rules: {
+  return { properties: {}, categories: {}, components: {}, rules: {
     limitByCheck: false, successLimit: 0, outcomeLimits: {}, prioritySpecial: false, propertyOrder: []
   } };
 }
 
-export function requireProperty(data, id) {
+export function requireProperty(system, id) {
   assertKey(id);
-  if (!Object.hasOwn(data.properties, id)) throw new Error(`Unknown property: ${id}`);
+  if (!Object.hasOwn(system?.properties ?? {}, id)) throw new Error(`Unknown property: ${id}`);
 }
 
-function references(data, values) {
+function references(system, values) {
   if (!Array.isArray(values)) throw new Error("Property references must be an array");
-  for (const id of values) requireProperty(data, id);
+  for (const id of values) requireProperty(system, id);
   if (new Set(values).size !== values.length) throw new Error("Duplicate property reference");
 }
 
@@ -52,22 +52,33 @@ function limit(value) {
 }
 
 // Validate without normalization: corrupt/future data must never be silently reset.
-export function validateData(data) {
-  exactFields(data, ["schemaVersion", "properties", "systems"]);
-  if (data.schemaVersion !== SCHEMA_VERSION) throw new Error("Unsupported SkyBricate schema version");
-  record(data.properties);
-  for (const property of Object.values(data.properties)) {
+export function validateData(data) { return validateShape(data, false); }
+
+// Strict recognition is only for an explicit, confirmed deletion of old test data.
+// It does not convert or normalize the old catalog.
+export function validateLegacyData(data) { return validateShape(data, true); }
+
+function properties(values) {
+  record(values);
+  for (const property of Object.values(values)) {
     exactFields(property, ["name", "description"]);
     if (typeof property.name !== "string" || !property.name.trim() || typeof property.description !== "string") {
       throw new Error("Property requires a non-empty name and string description");
     }
   }
+}
+function validateShape(data, legacy) {
+  exactFields(data, legacy ? ["schemaVersion", "properties", "systems"] : ["schemaVersion", "systems"]);
+  if (data.schemaVersion !== (legacy ? 1 : SCHEMA_VERSION)) throw new Error("Unsupported SkyBricate schema version");
+  if (legacy) properties(data.properties);
   record(data.systems);
   for (const system of Object.values(data.systems)) {
-    exactFields(system, ["categories", "components", "rules"]);
+    exactFields(system, legacy ? ["categories", "components", "rules"] : ["properties", "categories", "components", "rules"]);
+    if (!legacy) properties(system.properties);
+    const catalog = legacy ? data : system;
     for (const assignments of [system.categories, system.components]) {
       record(assignments);
-      for (const ids of Object.values(assignments)) references(data, ids);
+      for (const ids of Object.values(assignments)) references(catalog, ids);
     }
     const rules = system.rules;
     exactFields(rules, ["limitByCheck", "successLimit", "outcomeLimits", "prioritySpecial", "propertyOrder"]);
@@ -75,7 +86,7 @@ export function validateData(data) {
     limit(rules.successLimit);
     record(rules.outcomeLimits);
     for (const value of Object.values(rules.outcomeLimits)) limit(value);
-    references(data, rules.propertyOrder);
+    references(catalog, rules.propertyOrder);
   }
   return data;
 }

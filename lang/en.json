@@ -1,17 +1,41 @@
-{"SKYBRICATE":{"Compatibility":{
-  "dependency":"SkyBricate is disabled: Fabricate must be active.",
-  "version":"SkyBricate is disabled: only Fabricate 1.9.10 has been studied.",
-  "foundry":"SkyBricate is disabled: this scaffold targets Foundry VTT 13–14.",
-  "api":"SkyBricate is disabled: required Fabricate APIs are unavailable.",
-  "initialization":"SkyBricate is disabled: Fabricate initialization failed."
-},"Editor":{
-  "Title":"SkyBricate · Property catalog",
-  "Shared":"This catalog is shared by all crafting systems. Changes apply to the whole world.",
-  "Create":"New property", "Edit":"Edit", "Delete":"Delete", "ConfirmDelete":"Delete from all systems",
-  "DeleteWarning":"Delete this property and clear its category, component and rule-order references in ALL systems?",
-  "Cancel":"Cancel", "Save":"Save", "Name":"Name", "Description":"Description", "Refresh":"Reload catalog",
-  "Saving":"Saving…", "Saved":"Saved.", "Error":"Could not complete the operation:",
-  "NameRequired":"Enter a property name.", "Missing":"This property no longer exists. Reload the catalog.",
-  "Unavailable":"This editor context is no longer available. Reopen alchemy settings.",
-  "Contract":"SkyBricate: unsupported Fabricate editor structure. The property panel is disabled; no editor writes were made."
-}}}
+{
+  "SKYBRICATE": {
+    "Compatibility": {
+      "dependency": "SkyBricate is disabled: Fabricate must be active.",
+      "version": "SkyBricate is disabled: only Fabricate 1.9.10 has been studied.",
+      "foundry": "SkyBricate is disabled: this scaffold targets Foundry VTT 13–14.",
+      "api": "SkyBricate is disabled: required Fabricate APIs are unavailable.",
+      "initialization": "SkyBricate is disabled: Fabricate initialization failed."
+    },
+    "Editor": {
+      "Title": "SkyBricate properties",
+      "Create": "New property",
+      "Edit": "Edit",
+      "Delete": "Delete",
+      "ConfirmDelete": "Delete property",
+      "DeleteWarning": "Delete this property and clear its category, component and rule-order references in this system?",
+      "Cancel": "Cancel",
+      "Save": "Save",
+      "Name": "Name",
+      "Description": "Description",
+      "Refresh": "Reload catalog",
+      "Saving": "Saving…",
+      "Saved": "Saved.",
+      "Error": "Could not complete the operation:",
+      "NameRequired": "Enter a property name.",
+      "Missing": "This property no longer exists. Reload the catalog.",
+      "Unavailable": "This editor context is no longer available. Reopen Tags & Categories.",
+      "Contract": "SkyBricate: unsupported Fabricate editor structure. The property tab is disabled for this context.",
+      "Scoped": "Properties belong to the selected crafting system. Crafting does not apply them yet.",
+      "Add": "Add",
+      "SearchUnavailable": "Search is not available yet",
+      "Entries": "Properties",
+      "Empty": "No properties yet. Add a property above.",
+      "UsageUnavailable": "Usage not calculated",
+      "LegacyWarning": "SkyBricate schema 1 contains old test data with a shared catalog. It cannot be edited in this version. Migration is not provided.",
+      "Reset": "Reset old test data",
+      "ResetWarning": "Permanently delete ALL old SkyBricate test properties, assignments and rules in this world? Only skybricate.data is reset. Fabricate data is not affected.",
+      "ConfirmReset": "Delete old test data and start empty"
+    }
+  }
+}

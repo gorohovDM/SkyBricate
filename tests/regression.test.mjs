@@ -160,59 +160,52 @@ test("init registers a hidden world setting and API is exposed only after readin
 test("defaults are isolated, no write occurs on reading missing settings", async () => {
   const f = storageFixture();
   registerDataSetting(f.game.settings);
-  const snapshot = f.store.getSnapshot(); snapshot.properties.fake = {};
+  const snapshot = f.store.getSnapshot(); snapshot.systems.fake = {};
   assert.deepEqual(f.store.getSnapshot(), emptyData()); assert.equal(f.writes, 0);
-  await f.store.ensureSystem("alchemy");
-  assert.deepEqual(f.createStore().getSnapshot().systems.alchemy, emptySystem());
-  assert.equal(f.store.getSnapshot().systems.alchemy.rules.prioritySpecial, false);
+  await f.store.ensureSystem("a");
+  assert.deepEqual(f.createStore().getSnapshot().systems.a, emptySystem());
+  assert.equal(f.store.getSnapshot().systems.a.rules.prioritySpecial, false);
 });
 
 test("CRUD roundtrip retains stable IDs, category and special assignments, system isolation", async () => {
   const f = storageFixture(), store = f.store;
-  const healing = await store.createProperty({ name: "Лечение", description: "Восстановление" });
-  const cold = await store.createProperty({ name: "Холод" });
-  await store.setCategoryProperties("alchemy", "Грибы", [healing, cold]);
-  await store.setCategoryProperties("alchemy", "Цветы", [healing]);
-  await store.setComponentProperties("alchemy", "rare-mushroom", [cold]);
-  await store.setCategoryProperties("cooking", "Грибы", [cold]);
+  const healing = await store.createProperty("a", { name: "Лечение", description: "Восстановление" });
+  const cold = await store.createProperty("a", { name: "Холод" });
+  await store.setCategoryProperties("a", "Грибы", [healing, cold]);
+  await store.setCategoryProperties("a", "Цветы", [healing]);
+  await store.setComponentProperties("a", "rare-mushroom", [cold]);
+  await store.setCategoryProperties("cooking", "Грибы", []);
   const otherSystem = store.getSnapshot().systems.cooking;
-  await store.configureRules("alchemy", { limitByCheck: true, successLimit: 2,
+  await store.configureRules("a", { limitByCheck: true, successLimit: 2,
     prioritySpecial: true, outcomeLimits: { "outcome-uuid": 1, "critical-uuid": 3 }, propertyOrder: [cold, healing] });
-  await store.updateProperty(healing, { name: "Исцеление" });
-  await store.renameCategory("alchemy", "Грибы", "Лесные грибы");
+  await store.updateProperty("a", healing, { name: "Исцеление" });
+  await store.renameCategory("a", "Грибы", "Лесные грибы");
   const data = f.createStore().getSnapshot();
-  assert.equal(data.properties[healing].name, "Исцеление");
-  assert.equal(data.properties[healing].description, "Восстановление");
-  assert.deepEqual(data.systems.alchemy.categories["Лесные грибы"], [healing, cold]);
-  assert.deepEqual(data.systems.alchemy.components["rare-mushroom"], [cold]);
-  assert.equal(Object.hasOwn(data.systems.alchemy.categories, "Грибы"), false);
+  assert.equal(data.systems.a.properties[healing].name, "Исцеление");
+  assert.equal(data.systems.a.properties[healing].description, "Восстановление");
+  assert.deepEqual(data.systems.a.categories["Лесные грибы"], [healing, cold]);
+  assert.deepEqual(data.systems.a.components["rare-mushroom"], [cold]);
+  assert.equal(Object.hasOwn(data.systems.a.categories, "Грибы"), false);
   assert.deepEqual(data.systems.cooking, otherSystem);
-  assert.deepEqual(data.systems.alchemy.rules.propertyOrder, [cold, healing]);
-  data.systems.alchemy.categories["Цветы"].push(cold);
-  assert.deepEqual(store.getSnapshot().systems.alchemy.categories["Цветы"], [healing]);
+  assert.deepEqual(data.systems.a.rules.propertyOrder, [cold, healing]);
+  data.systems.a.categories["Цветы"].push(cold);
+  assert.deepEqual(store.getSnapshot().systems.a.categories["Цветы"], [healing]);
 });
 
-test("deleting a property cleans every system; narrow deletions preserve others and catalogue", async () => {
-  const { store } = storageFixture();
-  const first = await store.createProperty({ name: "First" }), second = await store.createProperty({ name: "Second" });
-  for (const id of ["alchemy", "cooking"]) {
-    await store.setCategoryProperties(id, "herbs", [first, second]);
-    await store.setComponentProperties(id, "component", [first]);
-    await store.configureRules(id, { propertyOrder: [first, second] });
+test("deleting scoped property cleans only its system even when IDs coincide", async () => {
+  const f=storageFixture(), store=new DataStore({getGame:()=>f.game,idFactory:()=>"same"});
+  for (const system of ["a","b"]) {
+    await store.createProperty(system,{name:system}); await store.setCategoryProperties(system,"herbs",["same"]);
+    await store.setComponentProperties(system,"special",["same"]); await store.configureRules(system,{propertyOrder:["same"]});
   }
-  await store.deleteProperty(first);
-  const data = store.getSnapshot();
-  assert.equal(Object.hasOwn(data.properties, first), false);
-  for (const system of Object.values(data.systems)) {
-    assert.deepEqual(system.categories.herbs, [second]); assert.deepEqual(system.components.component, []);
-    assert.deepEqual(system.rules.propertyOrder, [second]);
-  }
-  await store.deleteCategory("alchemy", "herbs"); await store.deleteComponent("alchemy", "component");
-  assert.deepEqual(store.getSnapshot().systems.alchemy.categories, {});
-  assert.deepEqual(store.getSnapshot().systems.cooking, data.systems.cooking);
-  await store.deleteSystem("alchemy");
-  assert.deepEqual(Object.keys(store.getSnapshot().systems), ["cooking"]);
-  assert.deepEqual(store.getSnapshot().properties, data.properties);
+  const before=store.getSnapshot().systems.b;
+  await store.deleteProperty("a","same"); const data=store.getSnapshot();
+  assert.deepEqual(data.systems.a.properties,{}); assert.deepEqual(data.systems.a.categories.herbs,[]);
+  assert.deepEqual(data.systems.a.components.special,[]); assert.deepEqual(data.systems.a.rules.propertyOrder,[]);
+  assert.deepEqual(data.systems.b,before);
+  await store.deleteCategory("a","herbs"); await store.deleteComponent("a","special");
+  assert.deepEqual(store.getSnapshot().systems.a.categories,{}); assert.deepEqual(store.getSnapshot().systems.a.components,{});
+  await store.deleteSystem("a"); assert.deepEqual(store.getSnapshot().systems,{b:before});
 });
 
 test("category rename conflicts reject atomically", async () => {
@@ -226,11 +219,11 @@ test("category rename conflicts reject atomically", async () => {
 
 test("invalid inputs, dangling/duplicate refs and dangerous keys are rejected without persistence", async () => {
   const f = storageFixture(), s = f.store;
-  const id = await s.createProperty({ name: "valid" }); const writes = f.writes, before = f.persisted;
+  const id = await s.createProperty("a", { name: "valid" }); const writes = f.writes, before = f.persisted;
   for (const operation of [
-    () => s.createProperty({ name: "  " }), () => s.createProperty({ name: "valid", description: null }),
-    () => s.createProperty({ name: "valid", extra: true }), () => s.updateProperty(id, { name: 2 }),
-    () => s.updateProperty("missing", { name: "valid" }),
+    () => s.createProperty("a", { name: "  " }), () => s.createProperty("a", { name: "valid", description: null }),
+    () => s.createProperty("a", { name: "valid", extra: true }), () => s.updateProperty("a", id, { name: 2 }),
+    () => s.updateProperty("a", "missing", { name: "valid" }),
     () => s.setCategoryProperties("a", "herbs", ["missing"]),
     () => s.setComponentProperties("a", "item", [id, id]),
     () => s.setCategoryProperties("a", "herbs", "invalid"),
@@ -243,7 +236,7 @@ test("invalid inputs, dangling/duplicate refs and dangerous keys are rejected wi
     () => s.ensureSystem("__proto__"), () => s.setCategoryProperties("a", "constructor", []),
     () => s.setComponentProperties("prototype", "item", []),
     () => s.configureRules("a", { outcomeLimits: JSON.parse('{"__proto__":0}') }),
-    () => s.updateProperty(id, JSON.parse('{"__proto__":{}}'))
+    () => s.updateProperty("a", id, JSON.parse('{"__proto__":{}}'))
   ]) await assert.rejects(operation());
   assert.equal(f.writes, writes); assert.deepEqual(f.persisted, before);
   assert.equal({}.polluted, undefined);
@@ -252,10 +245,10 @@ test("invalid inputs, dangling/duplicate refs and dangerous keys are rejected wi
 test("every write operation denies non-GM and checks permission when dequeued", async () => {
   const f = storageFixture(), s = f.store; f.game.user.isGM = false;
   for (const operation of [
-    () => s.createProperty({ name: "x" }), () => s.updateProperty("x", { name: "y" }), () => s.deleteProperty("x"),
+    () => s.createProperty("a", { name: "x" }), () => s.updateProperty("a", "x", { name: "y" }), () => s.deleteProperty("a", "x"),
     () => s.ensureSystem("a"), () => s.setCategoryProperties("a", "b", []), () => s.setComponentProperties("a", "b", []),
     () => s.renameCategory("a", "b", "c"), () => s.deleteCategory("a", "b"), () => s.deleteComponent("a", "b"),
-    () => s.configureRules("a", {}), () => s.deleteSystem("a")
+    () => s.configureRules("a", {}), () => s.deleteSystem("a"), () => s.resetLegacyData()
   ]) await assert.rejects(operation(), /require a GM/);
   assert.equal(f.writes, 0);
   f.game.user.isGM = true; const queued = s.ensureSystem("a"); f.game.user.isGM = false;
@@ -276,17 +269,17 @@ test("corrupt and future schema fail closed for read and write without resetting
 
 test("rejected persistence reports failure, preserves data and does not poison the queue", async () => {
   const f = storageFixture(), s = f.store;
-  const id = await s.createProperty({ name: "Before" }), before = s.getSnapshot();
+  const id = await s.createProperty("a", { name: "Before" }), before = s.getSnapshot();
   f.rejectSave = true;
-  await assert.rejects(s.updateProperty(id, { name: "After" }), /Persistence rejected/);
+  await assert.rejects(s.updateProperty("a", id, { name: "After" }), /Persistence rejected/);
   assert.deepEqual(s.getSnapshot(), before);
-  f.rejectSave = false; await s.updateProperty(id, { name: "Saved" });
-  assert.equal(s.getSnapshot().properties[id].name, "Saved");
+  f.rejectSave = false; await s.updateProperty("a", id, { name: "Saved" });
+  assert.equal(s.getSnapshot().systems.a.properties[id].name, "Saved");
 });
 
 test("queued writes read latest storage and snapshot caller-owned inputs", async () => {
   const f = storageFixture(), s = f.store;
-  const [a, b] = await Promise.all([s.createProperty({ name: "A" }), s.createProperty({ name: "B" })]);
+  const [a, b] = await Promise.all([s.createProperty("a", { name: "A" }), s.createProperty("a", { name: "B" })]);
   const ids = [a], patch = { prioritySpecial: true };
   const operations = [s.setCategoryProperties("a", "herbs", ids), s.setComponentProperties("a", "item", [b]), s.configureRules("a", patch)];
   ids.push(b); patch.prioritySpecial = false;
@@ -294,16 +287,58 @@ test("queued writes read latest storage and snapshot caller-owned inputs", async
   assert.deepEqual(s.getSnapshot().systems.a.categories.herbs, [a]);
   assert.deepEqual(s.getSnapshot().systems.a.components.item, [b]);
   assert.equal(s.getSnapshot().systems.a.rules.prioritySpecial, true);
-  await f.createStore().updateProperty(b, { name: "External edit" });
-  await s.updateProperty(a, { name: "Local edit" });
-  assert.equal(s.getSnapshot().properties[b].name, "External edit");
+  await f.createStore().updateProperty("a", b, { name: "External edit" });
+  await s.updateProperty("a", a, { name: "Local edit" });
+  assert.equal(s.getSnapshot().systems.a.properties[b].name, "External edit");
 });
 
 test("ID collisions reject and preserve existing property", async () => {
   const f = storageFixture(); const s = new DataStore({ getGame: () => f.game, idFactory: () => "fixed" });
-  await s.createProperty({ name: "Before" });
-  await assert.rejects(s.createProperty({ name: "After" }), /collision/);
-  assert.equal(s.getSnapshot().properties.fixed.name, "Before"); assert.equal(f.writes, 1);
+  await s.createProperty("a", { name: "Before" });
+  await assert.rejects(s.createProperty("a", { name: "After" }), /collision/);
+  assert.equal(s.getSnapshot().systems.a.properties.fixed.name, "Before"); assert.equal(f.writes, 1);
+});
+
+test("cross-system references and CRUD cannot reach another catalog", async () => {
+  const f=storageFixture(), s=f.store, id=await s.createProperty("a",{name:"A"});
+  const before=s.getSnapshot(), writes=f.writes;
+  for (const op of [()=>s.setCategoryProperties("b","herbs",[id]), ()=>s.setComponentProperties("b","component",[id]),
+    ()=>s.configureRules("b",{propertyOrder:[id]}), ()=>s.updateProperty("b",id,{name:"B"}), ()=>s.deleteProperty("b",id),
+    ()=>s.createProperty("constructor",{name:"X"}), ()=>s.updateProperty("__proto__",id,{name:"X"}), ()=>s.deleteProperty("prototype",id)]) {
+    await assert.rejects(op());
+  }
+  assert.deepEqual(s.getSnapshot(),before); assert.equal(f.writes,writes);
+});
+
+test("property input/patch copies are captured before queued scoped writes", async () => {
+  const f=storageFixture(), input={name:"Before",description:"Original"};
+  const create=f.store.createProperty("a",input); input.name="Changed"; const id=await create;
+  const patch={description:"Copied"}, update=f.store.updateProperty("a",id,patch); patch.description="Changed"; await update;
+  assert.deepEqual(f.store.getSnapshot().systems.a.properties[id],{name:"Before",description:"Copied"});
+});
+
+test("explicit reset recognizes only complete valid legacy and clears only own setting", async () => {
+  const oldSystem=emptySystem(); delete oldSystem.properties;
+  oldSystem.categories.herbs=["old"]; oldSystem.rules.propertyOrder=["old"];
+  const legacy={schemaVersion:1,properties:{old:{name:"Test",description:""}},systems:{a:oldSystem}};
+  const f=storageFixture(legacy); assert(f.store.hasLegacyData()); assert.throws(()=>f.store.getSnapshot()); assert.equal(f.writes,0);
+  f.rejectSave=true; await assert.rejects(f.store.resetLegacyData(),/Persistence/); assert.deepEqual(f.persisted,legacy);
+  f.rejectSave=false; await f.store.resetLegacyData(); assert.deepEqual(f.persisted,emptyData()); assert.equal(f.writes,1);
+  for (const data of [null,{}, {...legacy,extra:true}, {...legacy,schemaVersion:99}, emptyData(),
+    {...legacy,properties:{old:{name:3,description:""}}}, {...legacy,systems:{a:{...oldSystem,extra:true}}},
+    {...legacy,properties:{}}]) {
+    f.replace(data); const writes=f.writes;
+    assert.equal(f.store.hasLegacyData(),false); await assert.rejects(f.store.resetLegacyData());
+    assert.deepEqual(f.persisted,data); assert.equal(f.writes,writes);
+  }
+});
+
+test("queued reset rechecks schema/GM and a rejection leaves queue usable", async () => {
+  const legacy={schemaVersion:1,properties:{},systems:{}}, f=storageFixture(legacy);
+  const reset=f.store.resetLegacyData(); f.replace(emptyData()); await assert.rejects(reset); assert.equal(f.writes,0);
+  await f.store.ensureSystem("a"); assert.equal(f.writes,1);
+  f.replace(legacy); const denied=f.store.resetLegacyData(); f.game.user.isGM=false; await assert.rejects(denied,/require a GM/);
+  assert.deepEqual(f.persisted,legacy); f.game.user.isGM=true; await f.store.resetLegacyData(); assert.deepEqual(f.persisted,emptyData());
 });
 
 test("build fails if a runtime import is omitted from allowlist", async t => {
