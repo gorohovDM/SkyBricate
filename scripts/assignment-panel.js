@@ -1,65 +1,115 @@
-// This panel owns only its DOM. Native fields and drafts stay under Fabricate.
-export function mountAssignmentPanel({ target, systemId, componentId, data, canWrite, text }) {
+import { persistedSystems } from './assignment-contract.js';
+
+// This window reads only saved Fabricate definitions and writes only SkyBricate.
+export function mountAssignmentPanel({ target, getGame, data, canWrite, text }) {
   const document = target.ownerDocument, panel = document.createElement('section');
-  panel.className = 'manager-component-panel skybricate-assignment-panel';
-  panel.dataset.skybricateAssignments = componentId;
-  let disposed = false, pending = false, selected = new Set();
+  panel.className = 'skybricate-assignment-panel';
+  panel.dataset.skybricateAssignments = '';
+  let disposed = false, pending = false, started = false, systemId = '', componentId = '', selected = new Set(), systems = new Map();
   const el = (tag, content, parent = panel) => {
     const node = document.createElement(tag); if (content !== undefined) node.textContent = content;
     parent.append(node); return node;
   };
-  el('h3', text('Title'));
-  el('p', text('AssignmentHint')).className = 'manager-muted';
+  el('p', text('AssignmentHint'));
   const controls = el('fieldset'); controls.className = 'skybricate-controls';
-  el('legend', text('ComponentProperties'), controls);
-  const chips = el('div', undefined, controls); chips.className = 'manager-component-tag-run';
-  const save = el('button', text('SaveProperties'), controls); save.type = 'button';
-  save.dataset.skyAssignmentAction = 'save'; save.className = 'manager-button is-primary';
-  const refresh = el('button', text('ReloadAssignments'), controls); refresh.type = 'button';
-  refresh.dataset.skyAssignmentAction = 'refresh'; refresh.className = 'manager-button';
+  el('legend', text('AssignmentsTitle'), controls);
+  const systemLabel = el('label', text('CraftingSystem'), controls), systemSelect = el('select', undefined, systemLabel);
+  systemSelect.dataset.skySystem = '';
+  const componentLabel = el('label', text('Component'), controls), componentSelect = el('select', undefined, componentLabel);
+  componentSelect.dataset.skyComponent = '';
+  const chips = el('div', undefined, controls); chips.className = 'skybricate-property-chips';
+  const button = (label, action) => {
+    const node = el('button', text(label), controls); node.type = 'button'; node.dataset.skyAssignmentAction = action; return node;
+  };
+  const clear = button('ClearAssignments', 'clear'), save = button('SaveProperties', 'save');
+  const refresh = button('ReloadAssignments', 'refresh'), reconcile = button('ReconcileAssignments', 'reconcile');
+  el('p', text('SyncHint'));
   const message = el('p', ''); message.setAttribute('role', 'status'); message.setAttribute('aria-live', 'polite');
-  function load() {
-    chips.replaceChildren();
-    const system = data.getSnapshot().systems[systemId];
-    const properties = system?.properties ?? {};
+  const live = () => !disposed && panel.isConnected && canWrite();
+  const context = () => live() && !!systemId && !!componentId;
+  const error = failure => { if (!disposed) message.textContent = `${text('Error')} ${failure.message}`; };
+  function state() {
+    controls.disabled = pending || !live();
+    save.disabled = clear.disabled = !context();
+    systemSelect.disabled = !systems.size;
+    componentSelect.disabled = !systems.get(systemId)?.components.size;
+  }
+  function options(select, rows, value, empty) {
+    select.replaceChildren();
+    if (!rows.size) el('option', text(empty), select).value = '';
+    for (const row of rows.values()) el('option', `${row.name || row.id} [${row.id}]`, select).value = row.id;
+    select.value = value;
+  }
+  function loadProperties() {
+    chips.replaceChildren(); selected = new Set();
+    if (!systemId) { el('p', text('NoSystems'), chips); return; }
+    if (!componentId) { el('p', text('NoComponents'), chips); return; }
+    const system = data.getSnapshot().systems[systemId], properties = system?.properties ?? {};
     selected = new Set(system?.components[componentId] ?? []);
-    if (!Object.keys(properties).length) el('p', text('AssignmentEmpty'), chips).className = 'manager-muted';
+    if (!Object.keys(properties).length) el('p', text('AssignmentEmpty'), chips);
     for (const [id, property] of Object.entries(properties)) {
-      const button = el('button', property.name, chips); button.type = 'button'; button.title = property.description;
-      button.dataset.skyProperty = id; button.className = 'manager-chip skybricate-property-toggle';
-      button.setAttribute('aria-pressed', String(selected.has(id)));
+      const node = el('button', property.name, chips); node.type = 'button'; node.title = property.description;
+      node.dataset.skyProperty = id; node.className = 'skybricate-property-toggle';
+      node.setAttribute('aria-pressed', String(selected.has(id)));
     }
+  }
+  function components() {
+    const rows = systems.get(systemId)?.components ?? new Map();
+    if (!rows.has(componentId)) componentId = rows.keys().next().value ?? '';
+    options(componentSelect, rows, componentId, 'NoComponents'); loadProperties();
+  }
+  async function reload() {
+    if (!live() || pending) return;
+    started = true;
+    pending = true; state(); message.textContent = text('Saving'); panel.setAttribute('aria-busy', 'true');
+    try {
+      await data.reconcileAllComponentProperties({ canWrite: live });
+      if (!live()) return;
+      systems = persistedSystems(getGame());
+      if (!systems.has(systemId)) { systemId = systems.keys().next().value ?? ''; componentId = ''; }
+      options(systemSelect, systems, systemId, 'NoSystems'); components(); message.textContent = text('Reconciled');
+    } catch (failure) { error(failure); }
+    finally { pending = false; if (!disposed) { panel.removeAttribute('aria-busy'); state(); } }
+  }
+  function change(event) {
+    if (pending || !live()) { systemSelect.value = systemId; componentSelect.value = componentId; return; }
+    try {
+      if (event.target === systemSelect) { systemId = systemSelect.value; componentId = ''; components(); }
+      else if (event.target === componentSelect) { componentId = componentSelect.value; loadProperties(); }
+      message.textContent = ''; state();
+    } catch (failure) { error(failure); }
   }
   async function click(event) {
-    const button = event.target.closest?.('button');
-    if (!button || !panel.contains(button)) return;
+    const node = event.target.closest?.('button');
+    if (!node || !panel.contains(node)) return;
     event.preventDefault(); event.stopPropagation();
     if (disposed || pending) return;
-    if (!canWrite()) { controls.disabled = true; message.textContent = text('AssignmentUnavailable'); return; }
-    if (button.dataset.skyProperty) {
-      const id = button.dataset.skyProperty;
+    if (!live()) { state(); message.textContent = text('AssignmentUnavailable'); return; }
+    if (node === refresh || node === reconcile) { await reload(); return; }
+    if (!context()) return;
+    if (node.dataset.skyProperty) {
+      const id = node.dataset.skyProperty;
       if (selected.has(id)) selected.delete(id); else selected.add(id);
-      button.setAttribute('aria-pressed', String(selected.has(id))); message.textContent = ''; return;
+      node.setAttribute('aria-pressed', String(selected.has(id))); message.textContent = ''; return;
     }
-    if (button === refresh) {
-      try { load(); message.textContent = ''; } catch (error) { message.textContent = `${text('Error')} ${error.message}`; }
-      return;
+    if (node === clear) {
+      selected.clear(); for (const chip of chips.querySelectorAll('button')) chip.setAttribute('aria-pressed', 'false');
+      message.textContent = ''; return;
     }
-    if (button !== save) return;
-    pending = true; controls.disabled = true; panel.setAttribute('aria-busy', 'true'); message.textContent = text('Saving');
+    if (node !== save) return;
+    const originSystem = systemId, originComponent = componentId;
+    pending = true; state(); panel.setAttribute('aria-busy', 'true'); message.textContent = text('Saving');
     try {
-      await data.setComponentProperties(systemId, componentId, [...selected], { canWrite: () => !disposed && canWrite() });
-      if (!disposed && canWrite()) message.textContent = text('Saved');
-    } catch (error) {
-      if (!disposed && canWrite()) message.textContent = `${text('Error')} ${error.message}`;
-    } finally {
-      pending = false;
-      if (!disposed) { panel.removeAttribute('aria-busy'); controls.disabled = !canWrite(); }
-    }
+      await data.setComponentProperties(originSystem, originComponent, [...selected], {
+        canWrite: () => live() && systemId === originSystem && componentId === originComponent
+      });
+      if (live()) message.textContent = text('Saved');
+    } catch (failure) { error(failure); }
+    finally { pending = false; if (!disposed) { panel.removeAttribute('aria-busy'); state(); } }
   }
-  try { load(); } catch (error) { controls.disabled = true; message.textContent = `${text('Error')} ${error.message}`; }
-  panel.addEventListener('click', click);
-  const tags = target.querySelector('[data-component-edit-section="tags"]');
-  if (tags) tags.after(panel); else target.append(panel);
-  return { element: panel, dispose() { disposed = true; panel.removeEventListener('click', click); panel.remove(); } };
+  panel.addEventListener('click', click); panel.addEventListener('change', change); target.append(panel);
+  void reload();
+  return { element: panel, refresh: reload, start() { if (!started) void reload(); }, dispose() {
+    disposed = true; panel.removeEventListener('click', click); panel.removeEventListener('change', change); panel.remove();
+  } };
 }

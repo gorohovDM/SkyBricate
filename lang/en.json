@@ -36,17 +36,25 @@
       "Reset": "Reset old test data",
       "ResetWarning": "Permanently delete ALL old SkyBricate test properties, assignments and rules in this world? Only skybricate.data is reset. Fabricate data is not affected.",
       "ConfirmReset": "Delete old test data and start empty",
-      "AssignmentHint": "Save SkyBricate properties separately. Save native component fields with Fabricate. Unsaved property selections are discarded when changing component, system, tab or closing. Reload discards your selection.",
+      "AssignmentHint": "Select a saved crafting system and component. Save properties separately. Changing system or component, reloading, reconciling or closing discards unsaved selections.",
       "ComponentProperties": "Component properties",
       "SaveProperties": "Save properties",
       "ReloadAssignments": "Reload properties",
       "AssignmentEmpty": "No properties in this system. Create them in Tags & Categories → SkyBricate properties.",
-      "AssignmentUnavailable": "This component editor is no longer available. Reopen the component.",
-      "AssignmentContract": "SkyBricate assignments are disabled: install the Fabricate 1.9.10 component assignments v1 patch; the component form and full persisted snapshot must support this contract.",
+      "AssignmentUnavailable": "This editor is unavailable. Reopen SkyBricate assignments as a GM.",
+      "AssignmentContract": "SkyBricate cannot read the complete saved Fabricate 1.9.10 crafting systems. Assignments are unavailable.",
       "ReconcileAssignments": "Reconcile saved assignments",
-      "SyncHint": "Reconcile assignments with the complete saved component list to recover missed deletions. Several GMs use last-write-wins.",
-      "SyncError": "Fabricate deletion was saved, but SkyBricate assignments may be out of sync. Use Reconcile saved assignments to retry.",
-      "Reconciled": "Saved assignments reconciled."
+      "SyncHint": "Deleted component assignments are cleaned when this window opens or when you reload/reconcile the complete saved lists. Several GMs use last-write-wins. Missing systems are preserved.",
+      "SyncError": "Could not reconcile saved assignments. Your selections and previously saved data are preserved; retry after fixing the error.",
+      "Reconciled": "Saved assignments reconciled.",
+      "AssignmentsTitle": "SkyBricate component properties",
+      "OpenAssignments": "Open assignments editor",
+      "AssignmentsMenuHint": "Assign properties to saved Fabricate components in a separate GM window.",
+      "CraftingSystem": "Crafting system",
+      "Component": "Component",
+      "ClearAssignments": "Clear selection",
+      "NoSystems": "No saved crafting systems.",
+      "NoComponents": "No saved components in this system."
     }
   }
 }

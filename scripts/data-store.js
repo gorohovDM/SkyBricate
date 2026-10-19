@@ -1,5 +1,5 @@
 import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, validateData, validateLegacyData } from "./data-model.js";
-import { persistedComponents } from './assignment-contract.js';
+import { persistedComponents, persistedSystems } from './assignment-contract.js';
 
 export const SETTING_NAMESPACE = "skybricate";
 export const SETTING_KEY = "data";
@@ -146,6 +146,20 @@ export class DataStore {
       for (const id of requested ?? Object.keys(assignments ?? {})) {
         if (assignments && !present.has(id)) delete assignments[id];
       }
+    });
+  }
+
+  reconcileAllComponentProperties({ canWrite = () => true } = {}) {
+    return this.#write(data => {
+      if (!canWrite()) throw new Error('Component context is no longer available');
+      const systems = persistedSystems(this.#getGame());
+      for (const [id, system] of systems) {
+        const assignments = data.systems[id]?.components;
+        for (const componentId of Object.keys(assignments ?? {})) {
+          if (!system.components.has(componentId)) delete assignments[componentId];
+        }
+      }
+      // An absent system is not evidence of a complete empty component list.
     });
   }
 

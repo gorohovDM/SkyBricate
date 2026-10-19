@@ -1,6 +1,6 @@
 import { DataStore, registerDataSetting } from "./data-store.js";
 import { installManagerAdapter } from "./manager-adapter.js";
-import { installAssignmentAdapter } from './assignment-adapter.js';
+import { createAssignmentApplication, registerAssignmentMenu } from './assignment-adapter.js';
 
 export const MODULE_ID = "skybricate";
 export const FABRICATE_VERSION = "1.9.10";
@@ -20,11 +20,13 @@ export function checkCompatibility(game) {
   return null;
 }
 
-export function installLifecycle({ hooks, getGame, notifications, logger = console }) {
+export function installLifecycle({ hooks, getGame, notifications, logger = console,
+  getApplicationV2 = () => globalThis.foundry?.applications?.api?.ApplicationV2 }) {
   let foundryReady = false;
   let waiting = false;
   let terminal = false;
   const status = { ready: false, reason: null };
+  let data = null, AssignmentApplication = null;
   const fail = (reason) => {
     terminal = true;
     status.reason = reason;
@@ -42,18 +44,29 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
       const problem = checkCompatibility(getGame());
       if (problem) return fail(problem);
       const module = getGame().modules.get(MODULE_ID);
-      const data = new DataStore({ getGame });
-      if (module) module.api = Object.freeze({ data });
+      data = new DataStore({ getGame });
+      if (module) module.api = Object.freeze({ data, openAssignments: () => {
+        if (!AssignmentApplication || !getGame().user?.isGM || checkCompatibility(getGame()) !== null) {
+          throw new Error('SkyBricate assignments are unavailable');
+        }
+        return new AssignmentApplication().render({ force: true });
+      } });
       if (getGame().user?.isGM) installManagerAdapter({ hooks, getGame, data, notifications,
-        compatible: () => checkCompatibility(getGame()) === null });
-      if (getGame().user?.isGM) installAssignmentAdapter({ hooks, getGame, data, notifications,
         compatible: () => checkCompatibility(getGame()) === null });
       terminal = true;
       status.ready = true;
       logger.info("SkyBricate | Property editor ready; gameplay features are not implemented.");
     }).catch(() => fail("initialization"));
   };
-  hooks.once("init", () => registerDataSetting(getGame().settings));
+  hooks.once("init", () => {
+    registerDataSetting(getGame().settings);
+    const ApplicationV2 = getApplicationV2();
+    if (ApplicationV2) {
+      AssignmentApplication = createAssignmentApplication({ ApplicationV2, getGame, getData: () => data,
+        compatible: () => checkCompatibility(getGame()) === null });
+      registerAssignmentMenu(getGame().settings, AssignmentApplication);
+    }
+  });
   hooks.once("ready", () => { foundryReady = true; attempt(); });
   hooks.on("fabricate.ready", attempt);
   return status;

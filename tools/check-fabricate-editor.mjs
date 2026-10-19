@@ -4,15 +4,12 @@ import assert from "node:assert/strict";
 import { readFile, writeFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { resolve, dirname, relative } from "node:path";
 import { pathToFileURL } from "node:url";
-import { execFileSync } from "node:child_process";
 import { compile } from "svelte/compiler";
 import { emptyData } from "../scripts/data-model.js";
 import { managerFixture, settleDOM } from "../tests/helpers/manager-fixture.mjs";
-import { verifyFabricatePatch } from './build-fabricate.mjs';
+import { stockSources } from './fabricate-source.mjs';
 
-const upstream = resolve(process.argv[2] ?? ".reference/fabricate");
-assert.equal(execFileSync("git", ["-C", upstream, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-  "5bf36ddf950619317e41737acd3bfa1305591a26", "Requires Fabricate v1.9.10 source SHA");
+const { upstream, read: readStock } = stockSources(process.argv[2]);
 const cacheRoot = resolve("node_modules/.cache"); await mkdir(cacheRoot, { recursive: true });
 const temp = await mkdtemp(resolve(cacheRoot, "skybricate-contract-"));
 const f = managerFixture({ getSnapshot: emptyData });
@@ -20,7 +17,7 @@ const copied = new Set();
 async function prepare(path) {
   if (copied.has(path)) return;
   copied.add(path);
-  const source = await readFile(resolve(upstream, path), "utf8");
+  const source = readStock(path);
   const out = resolve(temp, path + (path.endsWith(".svelte") ? ".js" : ""));
   await mkdir(dirname(out), { recursive: true });
   if (path.endsWith("foundryBridge.js")) {
@@ -38,20 +35,16 @@ try {
   await prepare("src/ui/svelte/apps/manager/TagsCategoriesView.svelte");
   const contractFiles = ["src/ui/SvelteCraftingSystemManagerApp.svelte.js", "src/ui/svelte/SvelteApplicationMixinCore.js",
     "src/ui/svelte/stores/adminStore.js", "src/ui/svelte/stores/adminSystemInspectorProjection.js", "src/ui/svelte/apps/manager/CraftingSystemManagerRoot.svelte"];
-  // The assignments patch changes the root only by passing its saved system ID.
-  // Exact patched-file hashes are verified; untouched vocabulary files stay pinned.
-  await verifyFabricatePatch(upstream);
-  execFileSync("git", ["-C", upstream, "diff", "--exit-code", "HEAD", "--", ...copied, ...contractFiles.slice(0, -1)]);
-  const appSource = await readFile(resolve(upstream, contractFiles[0]), "utf8");
+  const appSource = readStock(contractFiles[0]);
   assert(appSource.includes("id: 'fabricate-crafting-system-manager'")); assert(appSource.includes("_adminStore = null"));
-  const mixin = await readFile(resolve(upstream, contractFiles[1]), "utf8");
+  const mixin = readStock(contractFiles[1]);
   assert(mixin.includes("_replaceHTML(result, content, options)")); assert(mixin.includes("this._svelteComponent = mountFn(Component"));
-  const adminStore = await readFile(resolve(upstream, contractFiles[2]), "utf8");
+  const adminStore = readStock(contractFiles[2]);
   assert(adminStore.includes("selectedSystemId.set(systemId)"));
   assert(adminStore.includes("await services.setSetting('lastManagedCraftingSystem', systemId)"));
-  const projection = await readFile(resolve(upstream, contractFiles[3]), "utf8");
+  const projection = readStock(contractFiles[3]);
   assert(projection.includes("id: selectedSystem.id")); assert(projection.includes("resolutionMode: selectedSystem.resolutionMode || 'simple'"));
-  const rootSource = await readFile(resolve(upstream, contractFiles.at(-1)), "utf8");
+  const rootSource = readStock(contractFiles.at(-1));
   assert(rootSource.includes('onTabChange={(id) => (tagsActiveTab = id)}'));
   assert(rootSource.includes('activeTab={tagsActiveTab}'));
   const wrapper = `<script>

@@ -6,11 +6,9 @@ import { managerFixture, vocabularyMarkup, readable, settleDOM } from "./helpers
 
 function fixture(options) {
   let persisted = emptyData(), writes = 0, reject = false, gate = null, next = 0;
-  const storageGame = { user: { isGM: true }, fabricate: { getCraftingSystemManager: () => ({ componentAssignmentContract: {
-    version: 'fabricate-component-assignments-v1', deletedHook: 'fabricate.componentsDeleted',
-    readPersistedSystem: systemId => ({ systemId, complete: true, componentIds: ['special'] })
-  } }) }, settings: {
-    get() { return structuredClone(persisted); },
+  const storageGame = { user: { isGM: true }, modules: new Map([['fabricate', { active: true, version: '1.9.10' }]]), settings: {
+    settings: new Map([['fabricate.craftingSystems', { scope: 'world', type: Array }]]),
+    get(ns) { if (ns === 'fabricate') return ['a','b'].map(id => ({id,components:[{id:'special'}]})); return structuredClone(persisted); },
     async set(ns, key, value) { assert.equal(ns, "skybricate"); assert.equal(key, "data"); if (gate) await gate;
       if (reject) throw new Error("disk failure"); persisted = structuredClone(value); writes++; }
   } };
