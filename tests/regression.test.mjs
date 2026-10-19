@@ -7,12 +7,14 @@ import { installLifecycle, checkCompatibility } from "../scripts/main.js";
 import { build, ROOT, RUNTIME_FILES } from "../tools/build.mjs";
 import { DataStore, registerDataSetting } from "../scripts/data-store.js";
 import { emptyData, emptySystem } from "../scripts/data-model.js";
+import "./editor-regressions.mjs";
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function fixture() {
   const handlers = new Map();
   const add = (name, fn) => handlers.set(name, [...(handlers.get(name) ?? []), fn]);
-  const hooks = { on: add, once: add, fire(name) { for (const fn of handlers.get(name) ?? []) fn(); } };
+  const hooks = { on: add, once: add, fire(name) { for (const fn of handlers.get(name) ?? []) fn(); },
+    count(name) { return handlers.get(name)?.length ?? 0; } };
   let finish;
   const ready = new Promise(resolve => { finish = resolve; });
   const game = { modules: new Map([["fabricate", { active: true, version: "1.9.10" }]]),
@@ -60,6 +62,19 @@ test("compatibility is rechecked after initialization", async () => {
   assert.equal(f.status.reason, "api"); assert.equal(f.status.ready, false);
 });
 
+test("manager hooks are registered only for GM after readiness and compatibility checks", async () => {
+  for (const isGM of [true, false]) {
+    const f = fixture(); f.game.user.isGM = isGM;
+    assert.equal(f.hooks.count("renderApplicationV2"), 0);
+    f.hooks.fire("ready"); await flush(); assert.equal(f.hooks.count("renderApplicationV2"), 0);
+    f.finish(); await flush();
+    assert.equal(f.hooks.count("renderApplicationV2"), isGM ? 1 : 0);
+    assert.equal(f.hooks.count("closeApplicationV2"), isGM ? 1 : 0);
+  }
+  const f = fixture(); f.game.modules.get("fabricate").version = "2.0.0";
+  f.finish(); f.hooks.fire("ready"); await flush(); assert.equal(f.hooks.count("renderApplicationV2"), 0);
+});
+
 function unzipStored(zip) {
   const entries = new Map(); let cursor = 0;
   while (zip.readUInt32LE(cursor) === 0x04034b50) {
@@ -79,17 +94,19 @@ test("release ZIP is reproducible, exact allowlist and manifest paths exist", as
   const out = await mkdtemp(resolve(tmpdir(), "skybricate-build-")); t.after(() => rm(out, { recursive: true, force: true }));
   const first = await build({ out }); const second = await build({ out }); assert.deepEqual(first.archive, second.archive);
   const entries = unzipStored(await readFile(resolve(out, "skybricate.zip")));
-  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "lang/en.json", "lang/ru.json"]);
+  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
   for (const [path, data] of entries) assert.deepEqual(data, await readFile(resolve(ROOT, path)));
   const manifest = JSON.parse(entries.get("module.json"));
   assert.deepEqual(await readFile(resolve(out, "module.json")), entries.get("module.json"));
   assert.equal(manifest.relationships.requires[0].id, "fabricate");
   assert.deepEqual(manifest.compatibility, { minimum: "13", maximum: "14" });
-  for (const path of [...manifest.esmodules, ...manifest.languages.map(l => l.path)]) assert(entries.has(path));
+  for (const path of [...manifest.esmodules, ...manifest.styles, ...manifest.languages.map(l => l.path)]) assert(entries.has(path));
   assert.equal(manifest.compatibility.verified, undefined);
   const en = JSON.parse(entries.get("lang/en.json")).SKYBRICATE.Compatibility;
   const ru = JSON.parse(entries.get("lang/ru.json")).SKYBRICATE.Compatibility;
   assert.deepEqual(Object.keys(en), Object.keys(ru));
+  assert.deepEqual(Object.keys(JSON.parse(entries.get("lang/en.json")).SKYBRICATE.Editor),
+    Object.keys(JSON.parse(entries.get("lang/ru.json")).SKYBRICATE.Editor));
 });
 
 test("build rejects missing runtime files, excluded paths and version drift", async t => {

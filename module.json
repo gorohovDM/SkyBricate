@@ -1,12 +1,13 @@
 {
   "id": "skybricate",
   "title": "SkyBricate — Hidden Properties for Fabricate",
-  "description": "Data storage for hidden ingredient properties in Fabricate. Gameplay and editor features are not implemented yet.",
+  "description": "Shared property catalog and GM editor in Fabricate alchemy settings. Gameplay integration is not implemented yet.",
   "version": "0.2.0",
   "authors": [{ "name": "gorohovDM" }],
   "compatibility": { "minimum": "13", "maximum": "14" },
   "relationships": { "requires": [{ "id": "fabricate", "type": "module", "compatibility": { "minimum": "1.9.10", "maximum": "1.9.10" } }] },
   "esmodules": ["scripts/main.js"],
+  "styles": ["styles/skybricate.css"],
   "languages": [
     { "lang": "en", "name": "English", "path": "lang/en.json" },
     { "lang": "ru", "name": "Русский", "path": "lang/ru.json" }

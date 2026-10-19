@@ -1,0 +1,44 @@
+# Этап 4: мастерская панель и общий справочник
+
+База реализации: `origin/codex/dev` `cef6b355b5e7c7a5bdde28f2f2d6c87b913ad220` (этап 3). Проверенный `origin/main`: `354f565b498093f42123a697cc77d8bc1b3dcdc3`, входит в историю рабочей ветки. Перед началом дерево было чистое, checkout переключён с `test` на `codex/dev`. Дата: 19 октября 2026 года. Это техническая передача; следующие этапы не начаты.
+
+## Прототип и граница доказательства
+
+Адресно проверены исходники Fabricate 1.9.10, SHA `5bf36ddf950619317e41737acd3bfa1305591a26`, локально `.reference/fabricate`. Полное исследование этапа 1 не повторялось. Изменений в исходниках Fabricate нет. Доступен собственный редактор name/description общего справочника через DataStore этапа 3. Нет интерфейса назначений/правил, знаний Actor, вкладок игрока, вмешательства в крафт, эффектов, макросов или сокетов. Native drafts и resolutionMode не записываются адаптером.
+
+Отсечка монтажа пройдена на уровне реального Svelte-компонента в тестовом DOM. Скрипт `tools/check-fabricate-editor.mjs` проверяет SHA локального upstream, компилирует без правок `CraftingSettingsView.svelte`, `ResolutionModeCard.svelte`, `RadioCardGroup.svelte`, `CraftingEffectPanel.svelte`; использует исходный `resolutionModeOptions.js` и реальные Svelte writable stores. Единственная подмена зависимости компонентов — localization bridge (`localize` возвращает ключ). Скомпилированные файлы создаются во временном каталоге внутри игнорируемого node_modules и удаляются после проверки. Для запуска нужен `--conditions=browser`, чтобы импортировать клиентскую версию Svelte.
+
+Проверены монтаж, повторный render, разрыв между selectedSystemId и async viewState refresh, смена режима, оптимистический radio и отмена native migration (возврат алхимии), навигация с размонтированием/возвратом, отсутствие дубликатов и observer feedback loop, close. Foundry не запускался: его настоящее приложение/события, темы, размеры панели и отображение уведомлений в мире этим тестом не проверены. Скрипт не компилирует весь CraftingSystemManagerRoot и не выдаёт себя за полный smoke мира. Первая проверка в Foundry должна включать открытие `Crafting > Settings`, смену двух систем, переход в другой экран/обратно, отмену и принятие смены режима, закрытие/повторное открытие и CRUD.
+
+## Прочитанный контракт
+
+- `src/ui/SvelteCraftingSystemManagerApp.svelte.js`: `DEFAULT_OPTIONS.id = 'fabricate-crafting-system-manager'`; `_adminStore` создаётся перед mount и содержит selectedSystemId/viewState; close уничтожает store и Svelte дерево. Имя constructor не используется, чтобы не зависеть от минификации сборки.
+- `src/ui/svelte/SvelteApplicationMixinCore.js`: первый mount в `_replaceHTML`, последующие render обновляют props без mount. Поэтому одного Foundry render hook недостаточно для внутренней Svelte-навигации.
+- `src/ui/svelte/stores/adminStore.js`: `selectedSystemId` и `viewState` — синхронно подписываемые stores; selectSystem публикует ID до await записи lastManagedCraftingSystem и refresh. В промежутке viewState ещё указывает на старую систему. Адаптер снимает панель немедленно при несовпадении.
+- `adminSystemInspectorProjection.js`: projected selectedSystem имеет id и resolutionMode. Они сверяются с selectedSystemId; неполный или неожиданный shape блокирует запись и уведомляет GM.
+- `CraftingSystemManagerRoot.svelte`: CraftingSettingsView существует при `currentView === 'crafting-settings' && selectedSystem`. activeView — приватное rune-состояние root, поэтому адаптер не пытается читать его из store.
+- `CraftingSettingsView.svelte`: `[data-crafting-settings]` содержит `[data-crafting-resolution-section]`, в нём `[data-crafting-resolution-mode]`. Последний в RadioCardGroup является fieldset с настоящими `input[type=radio]`, checked соответствует текущему выбору. Во время подтверждения native migration выбор может быть оптимистическим; панель требует одновременно projected alchemy и checked alchemy.
+
+Подтверждён публичный общий hook `renderApplicationV2` для классов в цепочке наследования и HTMLElement аргумент: [Foundry V13](https://foundryvtt.com/api/v13/functions/hookEvents.renderApplicationV2.html), [V14](https://foundryvtt.com/api/v14/functions/hookEvents.renderApplicationV2.html). Свойства options/element и события render/close описаны в [ApplicationV2 V13](https://foundryvtt.com/api/v13/classes/foundry.applications.api.ApplicationV2.html). Документация допускает pending HTML: если root ещё не подключён, временный observer документа ждёт подключения и сразу отключается; основной observer далее ограничен корнем приложения. Не меняется BASE_APPLICATION Fabricate. Закрытие отслеживается через общий `closeApplicationV2`.
+
+## Runtime lifecycle
+
+Установка адаптера выполняется один раз только GM, после Foundry ready, разрешённого Fabricate whenReady и повторного guard версии/API. Перед каждым действием дополнительно проверяются GM, совместимость и живой контекст. Инициализация панели не создаёт system entry и не записывает setting.
+
+На каждое приложение — отдельная session. Две подписки обновляют контекст, MutationObserver корня отслеживает Svelte-навигацию и замену секций. Смена system ID/projection/mode снимает старую панель синхронно; microtask reconcile после запланированного Svelte flush и observer следующих изменений монтируют новую. При неизменном контексте reconcile не пишет DOM, поэтому собственные изменения панели не создают цикл. Change listener проверяет временный native radio выбор. Close удаляет подписки, observers, listener и панель; pending microtask становится пустой операцией. При смене app.element/store через новый render старая session уничтожается. updateUser снимает панель, если доступ GM потерян.
+
+Нет settings host — обычный переход на другой экран, поэтому это состояние ничего не монтирует и не вызывает предупреждение. При наличии host отсутствие/неоднозначность вложенных секций или неизвестный store shape блокируют монтаж; GM получает одно предупреждение на app. Промежуточное несовпадение выбранного ID и projection нормально во время async refresh и не вызывает предупреждение. Если upstream полностью переименует host, он будет трактоваться как отсутствие этой поверхности, без записи; наличие внутреннего маршрута недоступно адаптеру. Контракт привязан к точной версии 1.9.10, публичной стабильности приватного store не обещает.
+
+## Справочник
+
+Панель прямо сообщает, что справочник общий для всех систем мира. Только name/description; IDs, назначения и правила редактировать нельзя. Отдельная кнопка сохранения; whitespace-only название отклоняется. Все строки, включая ошибки, отображаются textContent/value, без HTML enrichment. Удаление сначала показывает имя и предупреждает об очистке ссылок категорий, компонентов и порядка во всех системах; запись начинается только после отдельной кнопки подтверждения.
+
+DataStore остаётся единственной точкой сохранения. Pending отключает controls и повторные операции; успех показывается после fulfilled settings.set. Ошибка сохранения оставляет ввод и позволяет повторить операцию. Ошибка чтения/схемы отключает controls, остаётся «Перечитать справочник». Нет автоматического refresh от другого клиента: кнопка читает актуальный setting, смена/новый mount тоже читает заново. Межклиентское ограничение этапа 3 сохраняется (last write wins). Навигация/перечитывание сбрасывает несохранённый ввод. Уже подтверждённая глобальная запись может закончиться после close/смены контекста, но её callback не обновляет снятую панель и не монтирует её повторно.
+
+## Проверки и упаковка
+
+- `node --test tests/regression.test.mjs`: 37 passed, 0 failed. Обычный checkout/CI требует `npm ci`, но не требует `.reference`. Минимальная DOM fixture отражает проверенную цепочку компонентов; дополнительно проверены readiness до установки hooks, неподключённый root на render, несколько app sessions, malformed projection, non-GM, version mismatch/stale click, cleanup и queued reconcile, CRUD/rejected save/corrupt read, сохранение после close.
+- `node --conditions=browser tools/check-fabricate-editor.mjs`: PASS с указанным реальным upstream и Svelte 5.57.2, happy-dom 20.10.4. Это дополнительная адресная проверка с локальными исходниками, не скрытая зависимость регрессий.
+- `npm run build`: архив 9 runtime-файлов, воспроизводимость и точный allowlist проверяются регрессией. В этой среде npm отсутствует в PATH; команда выполнена через временный `.reference/npm-tool/package/bin/npm-cli.js run build` (npm 11.6.2). node 24.19.0.
+
+Упакованы manifest, main, data-model, data-store, manager-adapter, property-panel, scoped CSS, RU/EN. docs, .reference, node_modules, dev dependencies, tests и tools отсутствуют в ZIP. Lockfile содержит только dev dependencies. Версия 0.2.0 сохранена; GitHub Release/тег не создавались. Исполнитель публикует только origin/codex/dev; окончательный SHA сообщает отдельно ревьюеру. Следующие этапы требуют отдельного задания.
