@@ -1,161 +1,141 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Window } from 'happy-dom';
 import { DataStore } from '../scripts/data-store.js';
 import { emptyData } from '../scripts/data-model.js';
-import { installAssignmentAdapter } from '../scripts/assignment-adapter.js';
-import { managerFixture, settleDOM } from './helpers/manager-fixture.mjs';
+import { persistedSystems, persistedComponents } from '../scripts/assignment-contract.js';
+import { mountAssignmentPanel } from '../scripts/assignment-panel.js';
+import { createAssignmentApplication, registerAssignmentMenu } from '../scripts/assignment-adapter.js';
 
+const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
 function fixture() {
+  const window = new Window(), root = window.document.createElement('div'); window.document.body.append(root);
   let stored = emptyData(), writes = 0, reject = false, gate = null, readFailure = false;
-  const f = managerFixture({ getSnapshot: () => stored });
-  const systems = { a: ['same', 'other'], b: ['same', 'other'] };
-  const contract = { version: 'fabricate-component-assignments-v1', deletedHook: 'fabricate.componentsDeleted',
-    readPersistedSystem: systemId => {
-      if (readFailure) throw Error('read failed');
-      return { systemId, complete: true, componentIds: [...systems[systemId]] };
+  let corpus = ['a', 'b'].map(id => ({ id, name: 'Same', components: [{ id: 'same', name: '<img src=x>' }, { id: 'other', name: '<img src=x>' }] }));
+  const game = { user: { isGM: true }, modules: new Map([['fabricate', { active: true, version: '1.9.10' }]]),
+    i18n: { localize: key => key.split('.').at(-1) }, settings: {
+      settings: new Map([['fabricate.craftingSystems', { scope: 'world', type: Array }]]),
+      get: ns => { if (ns === 'fabricate') { if (readFailure) throw Error('read failure'); return structuredClone(corpus); } return structuredClone(stored); },
+      set: async (ns, key, value) => { assert.equal(ns, 'skybricate'); if (gate) await gate;
+        if (reject) throw Error('<img src=x>'); stored = structuredClone(value); writes++; }
     } };
-  f.game.fabricate = { getCraftingSystemManager: () => ({ componentAssignmentContract: contract }) };
-  f.game.settings = { get: () => structuredClone(stored), set: async (ns, key, value) => {
-    if (gate) await gate; if (reject) throw Error('<img src=x onerror=alert(1)>');
-    stored = structuredClone(value); writes++;
-  } };
   let next = 0;
-  const data = new DataStore({ getGame: () => f.game, idFactory: () => `p${++next}` });
-  // The assignment adapter has an independent application lifetime from vocabulary.
-  const disposeAssignments = installAssignmentAdapter({ hooks: f.hooks, getGame: () => f.game, data,
-    compatible: () => true, notifications: () => ({ warn: text => f.warnings.push(text) }), Observer: f.window.MutationObserver });
-  const panel = () => f.root.querySelector('[data-skybricate-assignments]');
-  const form = () => f.root.querySelector('form');
-  const open = (systemId = 'a', componentId = 'same') => {
-    f.selectedSystemId.set(systemId); f.viewState.set({ selectedSystem: { id: systemId, resolutionMode: 'simple' } });
-    f.root.innerHTML = `<form id="manager-component-edit-form" class="manager-component-edit-view" data-crafting-system-id="${systemId}" data-component-id="${componentId}"><section data-component-edit-section="tags">Native tags</section><input name="native" value="Native"></form>`;
-    f.render();
-  };
-  return Object.assign(f, { data, systems, contract, panel, form, open, writes: () => writes,
-    snapshot: () => structuredClone(stored), reject: value => { reject = value; }, gate: value => { gate = value; },
-    readFailure: value => { readFailure = value; },
-    destroyAll() { disposeAssignments(); f.destroy(); } });
+  const data = new DataStore({ getGame: () => game, idFactory: () => `p${++next}` });
+  const panels = [];
+  const f = { window, root, game, data, get corpus() { return corpus; }, set corpus(value) { corpus = value; },
+    get snapshot() { return structuredClone(stored); }, get writes() { return writes; },
+    set reject(value) { reject = value; }, set gate(value) { gate = value; }, set readFailure(value) { readFailure = value; },
+    mount(target = root) { const panel = mountAssignmentPanel({ target, getGame: () => game, data,
+      canWrite: () => game.user.isGM, text: key => key }); panels.push(panel); return panel; },
+    destroy() { panels.forEach(panel => panel.dispose()); window.happyDOM.abort(); } };
+  return f;
 }
-const button = (f, action) => f.panel().querySelector(`[data-sky-assignment-action="${action}"]`);
-const toggle = (f, id) => f.panel().querySelector(`[data-sky-property="${id}"]`);
-const save = f => button(f, 'save').click();
-const status = f => f.panel().querySelector('[role="status"]').textContent;
+const action = (root, name) => root.querySelector(`[data-sky-assignment-action="${name}"]`);
+const chip = (root, id = 'p1') => root.querySelector(`[data-sky-property="${id}"]`);
+function choose(f, root, kind, value) {
+  const node = root.querySelector(`[data-sky-${kind}]`); node.value = value;
+  node.dispatchEvent(new f.window.Event('change', { bubbles: true }));
+}
 
-test('component assignments: isolated persisted IDs, own assignments only, safe strings, empty selection/catalog', async t => {
-  const f = fixture(); t.after(() => f.destroyAll());
+test('standalone editor: saved IDs, scoped catalogs, own properties, clear, refresh, safe text and empty states', async t => {
+  const f = fixture(); t.after(() => f.destroy());
   const p = await f.data.createProperty('a', { name: '<img src=x>', description: '<script>' });
-  await f.data.createProperty('b', { name: 'Other system' });
-  await f.data.setCategoryProperties('a', 'category', [p]);
-  f.open(); await settleDOM(); assert(f.panel()); assert.equal(toggle(f, p).getAttribute('aria-pressed'), 'false');
-  assert.equal(f.panel().querySelector('img'), null); assert.equal(toggle(f, p).textContent, '<img src=x>');
-  toggle(f, p).click(); save(f); await settleDOM(); assert.equal(status(f), 'Saved');
-  assert.deepEqual(f.snapshot().systems.a.components.same, [p]);
-  f.open('a', 'other'); await settleDOM(); assert.equal(toggle(f, p).getAttribute('aria-pressed'), 'false');
-  f.open('a', 'same'); await settleDOM(); assert.equal(toggle(f, p).getAttribute('aria-pressed'), 'true');
-  toggle(f, p).click(); save(f); await settleDOM();
-  f.open(); await settleDOM(); assert.equal(toggle(f, p).getAttribute('aria-pressed'), 'false');
-  assert.deepEqual(f.snapshot().systems.a.components.same, []);
-  f.open('b'); await settleDOM(); assert.equal(toggle(f, p), null);
-  await f.data.deleteProperty('b', 'p2'); f.open('b'); await settleDOM(); assert.match(f.panel().textContent, /AssignmentEmpty/);
-  assert.equal(f.panel().querySelectorAll('[data-sky-property]').length, 0);
+  await f.data.createProperty('b', { name: 'B' }); await f.data.setCategoryProperties('a', 'category', [p]);
+  f.mount(); await settle(); assert.equal(f.root.querySelector('img'), null);
+  assert.match(f.root.querySelector('[data-sky-system]').textContent, /Same \[a\].*Same \[b\]/);
+  assert.match(f.root.querySelector('[data-sky-component]').textContent, /\[same\].*\[other\]/);
+  assert.equal(chip(f.root).getAttribute('aria-pressed'), 'false'); chip(f.root).click(); action(f.root, 'save').click(); await settle();
+  assert.deepEqual(f.snapshot.systems.a.components.same, [p]);
+  choose(f, f.root, 'component', 'other'); assert.equal(chip(f.root).getAttribute('aria-pressed'), 'false');
+  choose(f, f.root, 'component', 'same'); assert.equal(chip(f.root).getAttribute('aria-pressed'), 'true');
+  action(f.root, 'clear').click(); action(f.root, 'save').click(); await settle(); assert.deepEqual(f.snapshot.systems.a.components.same, []);
+  chip(f.root).click(); action(f.root, 'refresh').click(); await settle(); assert.equal(chip(f.root).getAttribute('aria-pressed'), 'false');
+  choose(f, f.root, 'system', 'b'); assert.equal(chip(f.root), null); await f.data.deleteProperty('b', 'p2');
+  action(f.root, 'refresh').click(); await settle(); assert.match(f.root.textContent, /AssignmentEmpty/);
+  f.corpus[1].components = []; action(f.root, 'refresh').click(); await settle(); assert.match(f.root.textContent, /NoComponents/);
+  f.corpus = []; action(f.root, 'refresh').click(); await settle(); assert.match(f.root.textContent, /NoSystems/);
 });
 
-test('assignment async saves: pending/retry, navigation, stale detached actions, close and GM loss', async t => {
-  const f = fixture(); t.after(() => f.destroyAll()); const p = await f.data.createProperty('a', { name: 'P' });
-  f.open(); await settleDOM(); toggle(f, p).click(); f.reject(true); save(f); await settleDOM();
-  assert.match(status(f), /Error/); assert.equal(toggle(f, p).getAttribute('aria-pressed'), 'true'); assert.equal(f.panel().querySelector('img'), null);
-  f.reject(false); let finish; f.gate(new Promise(resolve => { finish = resolve; }));
-  const old = f.panel(); save(f); save(f); await Promise.resolve(); assert.equal(old.getAttribute('aria-busy'), 'true');
-  const count = f.writes(); f.form().dataset.componentId = 'other'; await settleDOM(); assert.notEqual(f.panel(), old);
-  finish(); f.gate(null); await settleDOM(); assert.equal(f.writes(), count + 1);
-  assert.deepEqual(f.snapshot().systems.a.components.same, [p]); assert.equal(status(f), '');
-  old.querySelector('button').click(); await settleDOM(); assert.equal(f.writes(), count + 1);
-  const current = f.panel(); f.render(); await settleDOM(); assert.equal(f.panel(), current);
-  const observerCount = f.observerCallbacks; await settleDOM(); assert.equal(f.observerCallbacks, observerCount);
-  f.game.user.isGM = false; save(f); await settleDOM(); assert.equal(f.writes(), count + 1);
-  f.hooks.fire('updateUser'); await settleDOM(); assert.equal(f.panel(), null);
-  f.game.user.isGM = true; f.render(); await settleDOM(); assert(f.panel());
-  const stale = f.panel(); f.close(); stale.querySelector('button').click(); await settleDOM(); assert.equal(f.panel(), null);
+test('save errors keep selection; pending blocks duplicate saves/navigation; stale DOM and GM loss cannot write', async t => {
+  const f = fixture(); t.after(() => f.destroy()); await f.data.createProperty('a', { name: 'P' });
+  const panel = f.mount(); await settle(); chip(f.root).click(); f.reject = true; action(f.root, 'save').click(); await settle();
+  assert.match(f.root.querySelector('[role=status]').textContent, /Error/); assert.equal(chip(f.root).getAttribute('aria-pressed'), 'true');
+  assert.equal(f.root.querySelector('img'), null); f.reject = false;
+  let release; f.gate = new Promise(resolve => { release = resolve; }); const before = f.writes;
+  action(f.root, 'save').click(); action(f.root, 'save').click(); choose(f, f.root, 'component', 'other');
+  assert.equal(f.root.querySelector('[data-sky-component]').value, 'same');
+  release(); f.gate = null; await settle(); assert.equal(f.writes, before + 1); assert.deepEqual(f.snapshot.systems.a.components.same, ['p1']);
+  const stale = panel.element; panel.dispose(); action(stale, 'save').click(); await settle(); assert.equal(f.writes, before + 1);
+  f.mount(); await settle(); f.game.user.isGM = false; action(f.root, 'save').click(); await settle(); assert.equal(f.writes, before + 2);
 });
 
-test('assignment form contracts fail closed on absent/mismatched/partial IDs and unsupported contract', async t => {
-  const f = fixture(); t.after(() => f.destroyAll()); await f.data.createProperty('a', { name: 'P' });
-  f.open(); await settleDOM();
-  for (const change of [() => { f.form().dataset.componentId = 'missing'; },
-    () => { delete f.form().dataset.craftingSystemId; }, () => { f.form().dataset.craftingSystemId = 'b'; }]) {
-    change(); await settleDOM(); assert.equal(f.panel(), null);
-    assert.match(f.root.querySelector('[data-skybricate-sync]').textContent, /AssignmentContract/);
+test('full persisted setting adapter refuses malformed/unknown contracts without clearing data', async t => {
+  const f = fixture(); t.after(() => f.destroy()); await f.data.createProperty('a', { name: 'P' });
+  await f.data.setComponentProperties('a', 'same', ['p1']); const before = f.snapshot, writes = f.writes, corpus = f.corpus;
+  for (const invalid of [undefined, null, {}, [{ id: 'a' }], [{ id: 'a', components: null }],
+    [{ id: 'a', components: [{ id: 'same' }, { id: 'same' }] }], [corpus[0], corpus[0]],
+    [{ id: '__proto__', components: [] }], [{ id: 'a', components: [{ id: 1 }] }]]) {
+    f.corpus = invalid; assert.throws(() => persistedSystems(f.game)); await assert.rejects(f.data.reconcileAllComponentProperties());
+    assert.deepEqual(f.snapshot, before); assert.equal(f.writes, writes);
   }
-  f.open(); f.contract.version = 'unknown'; await settleDOM(); assert.equal(f.panel(), null);
-  assert.match(f.root.textContent, /AssignmentContract/);
-  assert.equal(f.writes(), 1);
-});
-
-test('cleanup confirmed IDs only, idempotence, failure/retry, missed events and invalid full snapshot', async t => {
-  const f = fixture(); t.after(() => f.destroyAll());
-  for (const systemId of ['a', 'b']) { const p = await f.data.createProperty(systemId, { name: 'P' });
-    await f.data.setComponentProperties(systemId, 'same', [p]); await f.data.setComponentProperties(systemId, 'other', [p]); }
-  f.open(); await settleDOM(); f.systems.a = ['other']; f.reject(true);
-  f.hooks.fire('fabricate.componentsDeleted', { systemId: 'a', componentIds: ['same', 'other'] }); await settleDOM();
-  assert(f.snapshot().systems.a.components.same); assert.match(f.warnings.at(-1), /SyncError/);
-  f.reject(false); f.readFailure(true);
-  f.root.querySelector('[data-skybricate-sync] button').click(); await settleDOM(); assert(f.snapshot().systems.a.components.same);
-  f.readFailure(false); f.root.querySelector('[data-skybricate-sync] button').click(); await settleDOM();
-  assert.equal(f.snapshot().systems.a.components.same, undefined); assert(f.snapshot().systems.a.components.other);
-  assert(f.snapshot().systems.b.components.same);
-  for (let i = 0; i < 2; i++) f.hooks.fire('fabricate.componentsDeleted', { systemId: 'a', componentIds: ['same'] });
-  await settleDOM(); assert(f.snapshot().systems.a.components.other);
-  // Reopen/refresh restores synchronization after a missed event, including a reload.
-  f.systems.b = ['other']; f.close(); f.open('b', 'other'); await settleDOM();
-  f.root.querySelector('[data-skybricate-sync] button').click(); await settleDOM(); assert.equal(f.snapshot().systems.b.components.same, undefined);
-  const original = f.contract.readPersistedSystem;
-  f.contract.readPersistedSystem = systemId => ({ systemId, complete: false, componentIds: [] });
-  await assert.rejects(f.data.reconcileComponentProperties('b')); assert(f.snapshot().systems.b.components.other);
-  f.contract.readPersistedSystem = original;
-  f.systems.a.push('new'); f.open('a', 'new'); await settleDOM(); assert.equal(toggle(f, 'p1').getAttribute('aria-pressed'), 'false');
-  assert.equal(f.hooks.count('fabricate.componentsDeleted'), 1);
-});
-
-test('DataStore validates component existence and context when queued; property deletion/GM/contract refuse writes', async t => {
-  const f = fixture(); t.after(() => f.destroyAll()); const p = await f.data.createProperty('a', { name: 'P' });
-  await assert.rejects(f.data.setComponentProperties('a', 'missing', [p]));
-  let valid = true; const save = f.data.setComponentProperties('a', 'same', [p], { canWrite: () => valid }); valid = false;
-  await assert.rejects(save); await f.data.deleteProperty('a', p);
-  await assert.rejects(f.data.setComponentProperties('a', 'same', [p]));
-  f.game.user.isGM = false; await assert.rejects(f.data.reconcileComponentProperties('a'));
-  f.game.user.isGM = true; f.contract.version = 'unknown'; await assert.rejects(f.data.setComponentProperties('a', 'same', []));
-});
-
-test('queued UI save refuses changed form, deleted component or GM loss before its write begins', async t => {
-  for (const change of ['navigation', 'deletion', 'permission']) {
-    const f = fixture(); t.after(() => f.destroyAll()); const p = await f.data.createProperty('a', { name: 'P' });
-    f.open(); await settleDOM(); toggle(f, p).click();
-    let release; f.gate(new Promise(resolve => { release = resolve; }));
-    const first = f.data.ensureSystem('b'); await Promise.resolve();
-    save(f); const before = f.writes();
-    if (change === 'navigation') f.form().dataset.componentId = 'other';
-    if (change === 'deletion') f.systems.a = ['other'];
-    if (change === 'permission') f.game.user.isGM = false;
-    release(); f.gate(null); await first; await settleDOM();
-    assert.equal(f.writes(), before + 1); assert.equal(f.snapshot().systems.a.components.same, undefined);
+  f.corpus = corpus;
+  for (const mutate of [() => { f.game.modules.get('fabricate').version = '2'; },
+    () => { f.game.modules.get('fabricate').version = '1.9.10'; f.game.settings.settings.get('fabricate.craftingSystems').scope = 'client'; },
+    () => { f.game.settings.settings.clear(); }]) {
+    mutate(); await assert.rejects(f.data.reconcileAllComponentProperties()); assert.deepEqual(f.snapshot, before);
   }
 });
 
-test('two manager windows keep independent selections and dispose without duplicate global deletion subscriptions', async t => {
-  const f = fixture(); t.after(() => f.destroyAll()); const p = await f.data.createProperty('a', { name: 'P' });
-  f.open(); await settleDOM();
-  const root2 = f.root.cloneNode(false); f.window.document.body.append(root2);
-  const app2 = { ...f.app, element: root2 };
-  root2.innerHTML = '<form id="manager-component-edit-form" class="manager-component-edit-view" data-crafting-system-id="a" data-component-id="other"></form>';
-  f.hooks.fire('renderApplicationV2', app2, root2); await settleDOM();
-  const second = root2.querySelector('[data-skybricate-assignments]'); assert(second);
-  toggle(f, p).click(); assert.equal(second.querySelector('[data-sky-property]').getAttribute('aria-pressed'), 'false');
-  save(f); await settleDOM(); second.querySelector('[data-sky-property]').click();
-  second.querySelector('[data-sky-assignment-action="save"]').click(); await settleDOM();
-  assert.deepEqual(f.snapshot().systems.a.components, { same: [p], other: [p] });
-  f.close(); assert.equal(f.panel(), null); assert(second.isConnected);
-  f.hooks.fire('renderApplicationV2', app2, root2); await settleDOM();
-  assert.equal(root2.querySelectorAll('[data-skybricate-assignments]').length, 1);
-  assert.equal(f.hooks.count('fabricate.componentsDeleted'), 1);
-  f.hooks.fire('closeApplicationV2', app2); assert.equal(second.isConnected, false); root2.remove();
+test('opening/reloading reconciles complete saved lists only, preserving absent systems and failed reads/writes', async t => {
+  const f = fixture(); t.after(() => f.destroy());
+  for (const id of ['a', 'b']) { const p = await f.data.createProperty(id, { name: 'P' }); await f.data.setComponentProperties(id, 'same', [p]); }
+  f.corpus[0].components = []; const b = f.corpus.pop(); f.readFailure = true;
+  const panel = f.mount(); await settle(); assert(f.snapshot.systems.a.components.same);
+  f.readFailure = false; f.reject = true; await panel.refresh(); assert(f.snapshot.systems.a.components.same);
+  f.reject = false; await panel.refresh(); assert.equal(f.snapshot.systems.a.components.same, undefined); assert(f.snapshot.systems.b.components.same);
+  await assert.rejects(f.data.reconcileComponentProperties('b')); assert.throws(() => persistedComponents(f.game, 'b'));
+  f.corpus.push(b); b.components = []; panel.dispose(); f.mount(); await settle(); assert.equal(f.snapshot.systems.b.components.same, undefined);
+});
+
+test('queued assignment/cleanup recheck component, GM, closed window and corpus at execution', async t => {
+  for (const change of ['delete', 'GM', 'close', 'unknown']) {
+    const f = fixture(); t.after(() => f.destroy()); await f.data.createProperty('a', { name: 'P' });
+    const panel = f.mount(); await settle(); chip(f.root).click();
+    let release; f.gate = new Promise(resolve => { release = resolve; });
+    const first = f.data.ensureSystem('b'); await settle(); action(f.root, 'save').click();
+    if (change === 'delete') f.corpus[0].components = [];
+    if (change === 'GM') f.game.user.isGM = false;
+    if (change === 'close') panel.dispose();
+    if (change === 'unknown') f.corpus = null;
+    release(); f.gate = null; await first; await settle(); assert.equal(f.snapshot.systems.a.components.same, undefined);
+  }
+  const f = fixture(); t.after(() => f.destroy()); await f.data.createProperty('a', { name: 'P' });
+  await f.data.setComponentProperties('a', 'same', ['p1']);
+  const cleanup = f.data.reconcileAllComponentProperties(); f.readFailure = true;
+  await assert.rejects(cleanup); assert(f.snapshot.systems.a.components.same);
+});
+
+test('two independent windows keep selections; no Fabricate window or hooks are needed', async t => {
+  const f = fixture(); t.after(() => f.destroy()); await f.data.createProperty('a', { name: 'P' });
+  const second = f.window.document.createElement('div'); f.window.document.body.append(second);
+  const first = f.mount(); f.mount(second); await settle(); choose(f, second, 'component', 'other');
+  chip(f.root).click(); assert.equal(chip(second).getAttribute('aria-pressed'), 'false');
+  action(f.root, 'save').click(); await settle(); chip(second).click(); action(second, 'save').click(); await settle();
+  assert.deepEqual(f.snapshot.systems.a.components, { same: ['p1'], other: ['p1'] }); first.dispose(); assert(chip(second).isConnected);
+});
+
+test('ApplicationV2 settings menu/render lifecycle handles detached content, rerender, close/reopen and permissions', async t => {
+  const f = fixture(); t.after(() => f.destroy()); await f.data.createProperty('a', { name: 'P' });
+  class Base { _onRender() {} _onClose() {} async close() { this._onClose(); } }
+  const Application = createAssignmentApplication({ ApplicationV2: Base, getGame: () => f.game, getData: () => f.data, compatible: () => true });
+  let registration; registerAssignmentMenu({ registerMenu: (...args) => { registration = args; } }, Application);
+  assert.equal(registration[0], 'skybricate'); assert.equal(registration[2].restricted, true); assert.equal(registration[2].type, Application);
+  const app = new Application(), content = f.window.document.createElement('div');
+  assert.equal(app._canRender(), undefined); app._replaceHTML(await app._renderHTML(), content); assert.equal(f.writes, 1);
+  f.root.append(content); app._onRender(); await settle(); assert(chip(content)); chip(content).click();
+  const before = app._assignments; app._replaceHTML(null, content); app._onRender(); await settle();
+  assert.equal(app._assignments, before); assert.equal(chip(content).getAttribute('aria-pressed'), 'true');
+  await app.close(); assert.equal(content.children.length, 0); app._replaceHTML(null, content); app._onRender(); await settle();
+  assert.equal(chip(content).getAttribute('aria-pressed'), 'false'); f.game.user.isGM = false; assert.equal(app._canRender(), false);
+  await app.close();
 });

@@ -11,7 +11,7 @@ import "./editor-regressions.mjs";
 import "./assignment-regressions.mjs";
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
-function fixture() {
+function fixture({ getApplicationV2 } = {}) {
   const handlers = new Map();
   const add = (name, fn) => handlers.set(name, [...(handlers.get(name) ?? []), fn]);
   const hooks = { on: add, once: add, fire(name) { for (const fn of handlers.get(name) ?? []) fn(); },
@@ -24,7 +24,7 @@ function fixture() {
       api: { playerExtensions: { registerPlayerNavProvider() { throw Error("Scaffold must not register UI"); } } } } };
   const warnings = [], infos = [];
   const status = installLifecycle({ hooks, getGame: () => game,
-    notifications: () => ({ warn: text => warnings.push(text) }), logger: { warn() {}, info: text => infos.push(text) } });
+    notifications: () => ({ warn: text => warnings.push(text) }), logger: { warn() {}, info: text => infos.push(text) }, getApplicationV2 });
   return { game, hooks, finish, status, warnings, infos };
 }
 
@@ -69,8 +69,8 @@ test("manager hooks are registered only for GM after readiness and compatibility
     assert.equal(f.hooks.count("renderApplicationV2"), 0);
     f.hooks.fire("ready"); await flush(); assert.equal(f.hooks.count("renderApplicationV2"), 0);
     f.finish(); await flush();
-    assert.equal(f.hooks.count("renderApplicationV2"), isGM ? 2 : 0);
-    assert.equal(f.hooks.count("closeApplicationV2"), isGM ? 2 : 0);
+    assert.equal(f.hooks.count("renderApplicationV2"), isGM ? 1 : 0);
+    assert.equal(f.hooks.count("closeApplicationV2"), isGM ? 1 : 0);
   }
   const f = fixture(); f.game.modules.get("fabricate").version = "2.0.0";
   f.finish(); f.hooks.fire("ready"); await flush(); assert.equal(f.hooks.count("renderApplicationV2"), 0);
@@ -126,12 +126,10 @@ test("build rejects missing runtime files, excluded paths and version drift", as
 function storageFixture(initial) {
   let persisted = structuredClone(initial), writes = 0, nextId = 0, rejectSave = false;
   const registrations = [];
-  const game = { user: { isGM: true }, fabricate: { getCraftingSystemManager: () => ({ componentAssignmentContract: {
-    version: 'fabricate-component-assignments-v1', deletedHook: 'fabricate.componentsDeleted',
-    readPersistedSystem: systemId => ({ systemId, complete: true, componentIds: ['rare-mushroom', 'special', 'item', 'b', 'component'] })
-  } }) }, settings: {
+  const game = { user: { isGM: true }, modules: new Map([['fabricate', { active: true, version: '1.9.10' }]]), settings: {
+    settings: new Map([['fabricate.craftingSystems', { scope: 'world', type: Array }]]),
     register: (...args) => registrations.push(args),
-    get(namespace, key) { assert.equal(namespace, "skybricate"); assert.equal(key, "data"); return persisted; },
+    get(namespace, key) { if (namespace === 'fabricate') return ['a','b'].map(id => ({ id, components: ['rare-mushroom', 'special', 'item', 'b', 'component'].map(id => ({id})) })); assert.equal(namespace, "skybricate"); assert.equal(key, "data"); return persisted; },
     async set(namespace, key, data) {
       assert.equal(namespace, "skybricate"); assert.equal(key, "data");
       if (rejectSave) throw Error("Persistence rejected");
@@ -159,6 +157,22 @@ test("init registers a hidden world setting and API is exposed only after readin
   const api = f.game.modules.get("skybricate").api;
   assert(api.data instanceof DataStore); assert(Object.isFrozen(api));
   assert.deepEqual(api.data.getSnapshot(), emptyData());
+});
+
+test('lifecycle registers restricted standalone menu at init and exposes guarded openAssignments after ready', async () => {
+  class Base { render(options) { this.renderOptions = options; return this; } }
+  const f = fixture({ getApplicationV2: () => Base }), storage = storageFixture();
+  let menu;
+  f.game.settings = { ...storage.game.settings, registerMenu: (ns, key, options) => { menu = { ns, key, ...options }; } };
+  f.game.modules.set('skybricate', {}); f.hooks.fire('init');
+  assert.equal(menu.ns, 'skybricate'); assert.equal(menu.key, 'assignments'); assert.equal(menu.restricted, true);
+  assert.equal(new menu.type()._canRender(), false);
+  f.hooks.fire('ready'); f.finish(); await flush();
+  const api = f.game.modules.get('skybricate').api, app = api.openAssignments();
+  assert(app instanceof menu.type); assert.deepEqual(app.renderOptions, { force: true });
+  assert.equal(app._canRender(), undefined);
+  f.game.user.isGM = false; assert.throws(() => api.openAssignments()); assert.equal(app._canRender(), false);
+  f.game.user.isGM = true; f.game.modules.get('fabricate').version = '2'; assert.throws(() => api.openAssignments());
 });
 
 test("defaults are isolated, no write occurs on reading missing settings", async () => {
