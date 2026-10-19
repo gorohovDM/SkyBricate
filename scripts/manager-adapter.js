@@ -120,7 +120,7 @@ function mountVocabulary({ surface, systemId, data, text, canWrite }) {
 }
 
 export function installManagerAdapter({ hooks, getGame, data, compatible,
-  notifications, Observer = globalThis.MutationObserver }) {
+  notifications, openAssignments, Observer = globalThis.MutationObserver }) {
   const sessions = new Map(), warned = new WeakSet();
   const text = key => getGame().i18n.localize(`SKYBRICATE.Editor.${key}`);
   const allowed = () => getGame().user?.isGM === true && compatible();
@@ -138,9 +138,33 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
     if (!root?.querySelectorAll || !root.ownerDocument || typeof Observer !== "function"
       || typeof store?.selectedSystemId?.subscribe !== "function"
       || typeof store?.viewState?.subscribe !== "function") { warn(app); return; }
-    let selectedId, state, mounted = null, disposed = false, queued = false, connectionObserver = null;
+    let selectedId, state, mounted = null, assignmentAction = null, disposed = false, queued = false, connectionObserver = null;
     const unsubscribers = [];
     function unmount() { mounted?.panel.dispose(); mounted = null; }
+    // Stock 1.9.10 header action container. No routes, drafts or stores are changed.
+    function assignmentHost() {
+      const hosts = root.querySelectorAll('.manager-header-actions');
+      return hosts.length === 1 && hosts[0].tagName === 'DIV' ? hosts[0] : null;
+    }
+    function disposeAssignmentAction() { assignmentAction?.dispose(); assignmentAction = null; }
+    function reconcileAssignmentAction() {
+      const host = allowed() && !disposed && root.isConnected && app.element === root
+        && app._adminStore === store && typeof openAssignments === 'function' ? assignmentHost() : null;
+      if (assignmentAction && (assignmentAction.host !== host || !host?.contains(assignmentAction.button))) disposeAssignmentAction();
+      if (!host || assignmentAction) return;
+      const button = root.ownerDocument.createElement('button');
+      button.type = 'button'; button.className = 'manager-button is-ghost';
+      button.dataset.skybricateAssignments = ''; button.textContent = text('PropertyAssignments');
+      const click = async event => {
+        event.preventDefault(); event.stopPropagation();
+        if (disposed || !allowed() || !root.isConnected || app.element !== root
+          || app._adminStore !== store || assignmentHost() !== host || !host.contains(button)) return;
+        try { await openAssignments(); }
+        catch { notifications()?.warn(text('OpenAssignmentsError')); }
+      };
+      button.addEventListener('click', click); host.append(button);
+      assignmentAction = { host, button, dispose() { button.removeEventListener('click', click); button.remove(); } };
+    }
     function context() {
       if (!allowed() || disposed || !root.isConnected || app.element !== root || app._adminStore !== store) return null;
       const system = state?.selectedSystem;
@@ -158,6 +182,7 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
       if (disposed) return;
       try {
         if (root.isConnected && connectionObserver) { connectionObserver.disconnect(); connectionObserver = null; }
+        reconcileAssignmentAction();
         const next = context();
         if (mounted && (!next || mounted.id !== next.id || mounted.target !== next.target
           || !mounted.panel.element.isConnected || !mounted.panel.sync(next.surface))) unmount();
@@ -187,6 +212,7 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
     const session = { root, store, schedule, dispose() {
       disposed = true; observer.disconnect(); connectionObserver?.disconnect(); connectionObserver = null;
       for (const unsubscribe of unsubscribers) unsubscribe();
+      disposeAssignmentAction();
       unmount();
     } };
     sessions.set(app, session);

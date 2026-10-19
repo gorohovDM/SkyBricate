@@ -25,6 +25,39 @@ const native = (f, id) => f.root.querySelector(`[data-vocabulary-tab="${id}"]`);
 const key = (f, node, key) => node.dispatchEvent(new f.window.KeyboardEvent("keydown", { key, bubbles: true }));
 const legacy = () => ({ schemaVersion: 1, properties: { old: { name: "Old test", description: "" } }, systems: {} });
 
+test("manager assignments action survives navigation and rerender; stale actions and failures are safe", async t => {
+  let opens = 0, reject = false;
+  const f = fixture({ openAssignments: async () => { opens++; if (reject) throw Error('render failed'); } });
+  t.after(() => f.destroy());
+  const header = '<div class="manager-header-actions" aria-label="Actions"><button>Native action</button></div>';
+  const button = () => f.root.querySelector('[data-skybricate-assignments]');
+  f.root.innerHTML = header + vocabularyMarkup(); f.render(); await settleDOM();
+  assert.equal(button().textContent, 'PropertyAssignments'); button().click(); await settleDOM(); assert.equal(opens, 1);
+  for (let i = 0; i < 4; i++) f.render();
+  await settleDOM(); assert.equal(f.root.querySelectorAll('[data-skybricate-assignments]').length, 1);
+  const count = f.observerCallbacks; await settleDOM(); assert.equal(f.observerCallbacks, count);
+  const stale = button(); f.root.innerHTML = header + '<main>Components</main>'; await settleDOM();
+  stale.click(); assert.equal(opens, 1); button().click(); await settleDOM(); assert.equal(opens, 2);
+  f.compatible = false; button().click(); assert.equal(opens, 2);
+  f.compatible = true; f.game.user.isGM = false; button().click(); assert.equal(opens, 2);
+  f.game.user.isGM = true; reject = true; button().click(); await settleDOM();
+  assert.equal(opens, 3); assert.deepEqual(f.warnings, ['OpenAssignmentsError']);
+  const closed = button(); f.close(); await settleDOM(); closed.click(); assert.equal(opens, 3);
+  assert.equal(button(), null); assert.equal(f.observerCount, 0); assert.equal(f.selectedSystemId.count, 0);
+  f.render(); await settleDOM(); assert(button());
+  f.game.user.isGM = false; f.hooks.fire('updateUser'); assert.equal(button(), null);
+});
+
+test("assignments action requires an unambiguous header and GM access", async t => {
+  for (const options of [{ isGM: false }, {}]) {
+    const f = fixture({ ...options, openAssignments: () => { throw Error('must not open'); } });
+    t.after(() => f.destroy());
+    f.root.innerHTML = '<div class="manager-header-actions"></div>'
+      + (options.isGM === false ? '' : '<div class="manager-header-actions"></div>');
+    f.render(); await settleDOM(); assert.equal(f.root.querySelector('[data-skybricate-assignments]'), null);
+  }
+});
+
 test("mount in Tags & Categories only, rerender/replacement, cleanup, no feedback loop", async t => {
   const f = fixture(); t.after(() => f.destroy()); f.render(); await settleDOM();
   assert(f.tab()); assert.equal(f.panel(), null); assert.equal(f.getWrites(), 0);
