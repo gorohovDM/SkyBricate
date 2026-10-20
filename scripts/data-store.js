@@ -1,10 +1,23 @@
-import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, validateData, validateLegacyData } from "./data-model.js";
+import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, readData, validateData, validateLegacyData } from "./data-model.js";
 import { persistedComponents, persistedSystems } from './assignment-contract.js';
 
 export const SETTING_NAMESPACE = "skybricate";
 export const SETTING_KEY = "data";
+export const SPECIAL_SETTING_KEY = "showSpecialProperties";
+export const specialPropertiesEnabled = game => game.settings.get(SETTING_NAMESPACE, SPECIAL_SETTING_KEY) === true;
+const specialSettingListeners = new Set();
+let specialSettingRevision = 0;
+export function subscribeSpecialSetting(listener) {
+  specialSettingListeners.add(listener);
+  return () => specialSettingListeners.delete(listener);
+}
 
 export function registerDataSetting(settings) {
+  settings.register(SETTING_NAMESPACE, SPECIAL_SETTING_KEY, {
+    name: "SKYBRICATE.Editor.SpecialSetting", hint: "SKYBRICATE.Editor.SpecialSettingHint",
+    scope: "world", config: true, type: Boolean, default: false,
+    onChange: () => { specialSettingRevision++; for (const listener of specialSettingListeners) listener(); }
+  });
   settings.register(SETTING_NAMESPACE, SETTING_KEY, {
     scope: "world", config: false, type: Object, default: emptyData()
   });
@@ -25,8 +38,7 @@ export class DataStore {
   getSnapshot() {
     const stored = this.#getGame().settings.get(SETTING_NAMESPACE, SETTING_KEY);
     const data = stored === undefined ? emptyData() : stored;
-    validateData(data);
-    return copy(data);
+    return readData(data);
   }
 
   #enqueue(operation) {
@@ -93,7 +105,7 @@ export class DataStore {
       const system = data.systems[systemId];
       requireProperty(system, id);
       delete system.properties[id];
-      for (const assignments of [system.categories, system.components]) {
+      for (const assignments of [system.categories, system.components, system.specialComponents]) {
         for (const key of Object.keys(assignments)) assignments[key] = assignments[key].filter(value => value !== id);
       }
       system.rules.propertyOrder = system.rules.propertyOrder.filter(value => value !== id);
@@ -122,14 +134,34 @@ export class DataStore {
     return this.#assign(systemId, "categories", categoryKey, propertyIds);
   }
 
-  setComponentProperties(systemId, componentId, propertyIds, { canWrite = () => true } = {}) {
-    const ids = copy(propertyIds);
+  setComponentProperties(systemId, componentId, propertyIds, options = {}) {
+    return this.setComponentAssignments(systemId, componentId, { ordinary: propertyIds }, options);
+  }
+
+  setComponentAssignments(systemId, componentId, input, { canWrite = () => true, editSpecial = false } = {}) {
+    const values = copy(input);
+    const settingRevision = specialSettingRevision;
+    const specialEditable = editSpecial && specialPropertiesEnabled(this.#getGame());
     return this.#write(data => {
+      assertFields(values, ["ordinary", "special"]);
+      if (!Object.hasOwn(values, "ordinary")) throw new Error("Missing ordinary assignments");
       assertKey(componentId);
       if (!canWrite() || !persistedComponents(this.#getGame(), systemId).has(componentId)) {
         throw new Error('Component context is no longer available');
       }
-      this.#system(data, systemId).components[componentId] = ids;
+      const system = this.#system(data, systemId);
+      if (Object.hasOwn(values, "special")) {
+        if (!Array.isArray(values.special)) throw new Error("Property references must be an array");
+        values.special.forEach(id => requireProperty(system, id));
+        if (new Set(values.special).size !== values.special.length) throw new Error("Duplicate property reference");
+      }
+      system.components[componentId] = values.ordinary;
+      // Hidden assignments come from the latest queued snapshot. A window
+      // opened while hidden cannot clear them after the setting becomes enabled.
+      if (specialEditable && settingRevision === specialSettingRevision && specialPropertiesEnabled(this.#getGame())) {
+        if (!Object.hasOwn(values, "special")) throw new Error("Missing special assignments");
+        system.specialComponents[componentId] = values.special;
+      }
     });
   }
 
@@ -142,9 +174,10 @@ export class DataStore {
         if (!Array.isArray(requested)) throw new Error('Invalid deleted IDs');
         requested.forEach(assertKey);
       }
-      const assignments = data.systems[systemId]?.components;
-      for (const id of requested ?? Object.keys(assignments ?? {})) {
-        if (assignments && !present.has(id)) delete assignments[id];
+      for (const assignments of [data.systems[systemId]?.components, data.systems[systemId]?.specialComponents]) {
+        for (const id of requested ?? Object.keys(assignments ?? {})) {
+          if (assignments && !present.has(id)) delete assignments[id];
+        }
       }
     });
   }
@@ -154,9 +187,10 @@ export class DataStore {
       if (!canWrite()) throw new Error('Component context is no longer available');
       const systems = persistedSystems(this.#getGame());
       for (const [id, system] of systems) {
-        const assignments = data.systems[id]?.components;
-        for (const componentId of Object.keys(assignments ?? {})) {
-          if (!system.components.has(componentId)) delete assignments[componentId];
+        for (const assignments of [data.systems[id]?.components, data.systems[id]?.specialComponents]) {
+          for (const componentId of Object.keys(assignments ?? {})) {
+            if (!system.components.has(componentId)) delete assignments[componentId];
+          }
         }
       }
       // An absent system is not evidence of a complete empty component list.
@@ -183,7 +217,15 @@ export class DataStore {
   }
 
   deleteCategory(systemId, categoryKey) { return this.#remove(systemId, "categories", categoryKey); }
-  deleteComponent(systemId, componentId) { return this.#remove(systemId, "components", componentId); }
+  deleteComponent(systemId, componentId) {
+    return this.#write(data => {
+      assertKey(systemId); assertKey(componentId);
+      if (Object.hasOwn(data.systems, systemId)) {
+        delete data.systems[systemId].components[componentId];
+        delete data.systems[systemId].specialComponents[componentId];
+      }
+    });
+  }
 
   configureRules(systemId, patch) {
     const values = copy(patch);

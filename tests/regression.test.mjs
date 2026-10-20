@@ -129,7 +129,7 @@ function storageFixture(initial) {
   const game = { user: { isGM: true }, modules: new Map([['fabricate', { active: true, version: '1.9.10' }]]), settings: {
     settings: new Map([['fabricate.craftingSystems', { scope: 'world', type: Array }]]),
     register: (...args) => registrations.push(args),
-    get(namespace, key) { if (namespace === 'fabricate') return ['a','b'].map(id => ({ id, components: ['rare-mushroom', 'special', 'item', 'b', 'component'].map(id => ({id})) })); assert.equal(namespace, "skybricate"); assert.equal(key, "data"); return persisted; },
+    get(namespace, key) { if (namespace === 'fabricate') return ['a','b'].map(id => ({ id, components: ['rare-mushroom', 'special', 'item', 'b', 'component'].map(id => ({id})) })); assert.equal(namespace, "skybricate"); if (key === "showSpecialProperties") return false; assert.equal(key, "data"); return persisted; },
     async set(namespace, key, data) {
       assert.equal(namespace, "skybricate"); assert.equal(key, "data");
       if (rejectSave) throw Error("Persistence rejected");
@@ -147,8 +147,8 @@ test("init registers a hidden world setting and API is exposed only after readin
   f.game.settings = storage.game.settings;
   f.game.modules.set("skybricate", {});
   f.hooks.fire("init");
-  assert.equal(storage.registrations.length, 1);
-  const [namespace, key, options] = storage.registrations[0];
+  assert.equal(storage.registrations.length, 2);
+  const [namespace, key, options] = storage.registrations.find(([, key]) => key === "data");
   assert.equal(namespace, "skybricate"); assert.equal(key, "data");
   assert.equal(options.scope, "world"); assert.equal(options.config, false); assert.equal(options.type, Object);
   assert.deepEqual(options.default, emptyData());
@@ -336,7 +336,7 @@ test("property input/patch copies are captured before queued scoped writes", asy
 });
 
 test("explicit reset recognizes only complete valid legacy and clears only own setting", async () => {
-  const oldSystem=emptySystem(); delete oldSystem.properties;
+  const oldSystem=emptySystem(); delete oldSystem.properties; delete oldSystem.specialComponents;
   oldSystem.categories.herbs=["old"]; oldSystem.rules.propertyOrder=["old"];
   const legacy={schemaVersion:1,properties:{old:{name:"Test",description:""}},systems:{a:oldSystem}};
   const f=storageFixture(legacy); assert(f.store.hasLegacyData()); assert.throws(()=>f.store.getSnapshot()); assert.equal(f.writes,0);
@@ -366,4 +366,42 @@ test("build fails if a runtime import is omitted from allowlist", async t => {
   }
   await writeFile(resolve(root, "scripts/data-store.js"), 'import "./unpackaged.js";');
   await assert.rejects(build({ root }), /Import is not packaged/);
+});
+
+test('schema 2 reads losslessly as ordinary links without writes; first successful edit persists schema 3', async () => {
+  const system=emptySystem(); delete system.specialComponents;
+  system.properties.p={name:'P',description:'Description'}; system.components.item=['p']; system.categories.herbs=['p'];
+  system.rules.prioritySpecial=true; system.rules.propertyOrder=['p'];
+  const old={schemaVersion:2,systems:{a:system}}, f=storageFixture(old);
+  const snapshot=f.store.getSnapshot(); assert.equal(snapshot.schemaVersion,3); assert.deepEqual(snapshot.systems.a.specialComponents,{});
+  assert.deepEqual(snapshot.systems.a.components,system.components); assert.deepEqual(snapshot.systems.a.rules,system.rules);
+  assert.deepEqual(f.persisted,old); assert.equal(f.writes,0);
+  f.rejectSave=true; await assert.rejects(f.store.updateProperty('a','p',{name:'Renamed'})); assert.deepEqual(f.persisted,old);
+  f.rejectSave=false; await f.store.updateProperty('a','p',{name:'Renamed'});
+  assert.equal(f.persisted.schemaVersion,3); assert.deepEqual(f.persisted.systems.a.components.item,['p']); assert.deepEqual(f.persisted.systems.a.specialComponents,{});
+});
+
+test('strict schema 2/3 recognition never drops unknown fields, malformed special links or conflicting types', async () => {
+  const base={...emptyData(),systems:{a:emptySystem()}}; base.systems.a.properties.p={name:'P',description:''};
+  const cases=[];
+  for (const mutate of [s=>delete s.specialComponents, s=>s.specialComponents=null,
+    s=>s.specialComponents={item:['p','p']}, s=>s.specialComponents={item:['missing']},
+    s=>{s.components.item=['p'];s.specialComponents.item=['p'];},
+    s=>s.specialComponents=JSON.parse('{"__proto__":[]}'),s=>s.properties.p.special=true]) {
+    const value=structuredClone(base); mutate(value.systems.a); cases.push(value);
+  }
+  const old=structuredClone(base); old.schemaVersion=2; delete old.systems.a.specialComponents;
+  cases.push({...old,extra:true}, {...old,systems:{a:{...old.systems.a,specialComponents:{}}}});
+  for(const initial of cases) {
+    const f=storageFixture(initial); assert.throws(()=>f.store.getSnapshot()); await assert.rejects(f.store.ensureSystem('b'));
+    assert.deepEqual(f.persisted,initial); assert.equal(f.writes,0); assert.equal(f.store.hasLegacyData(),false);
+  }
+});
+
+test('special section is a visible world setting defaulting off, independent of algorithm rules', () => {
+  const f=storageFixture(); registerDataSetting(f.game.settings);
+  const [ns,key,options]=f.registrations.find(([,key])=>key==='showSpecialProperties');
+  assert.equal(ns,'skybricate'); assert.equal(key,'showSpecialProperties');
+  assert.equal(options.scope,'world'); assert.equal(options.config,true); assert.equal(options.default,false); assert.equal(options.type,Boolean);
+  assert.equal(typeof options.onChange,'function'); assert.equal(emptySystem().rules.prioritySpecial,false);
 });
