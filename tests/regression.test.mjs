@@ -11,6 +11,7 @@ import "./editor-regressions.mjs";
 import "./assignment-regressions.mjs";
 import "./knowledge-regressions.mjs";
 import "./player-regressions.mjs";
+import "./selection-regressions.mjs";
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function fixture({ getApplicationV2 } = {}) {
@@ -109,7 +110,7 @@ test("release ZIP is reproducible, exact allowlist and manifest paths exist", as
   const out = await mkdtemp(resolve(tmpdir(), "skybricate-build-")); t.after(() => rm(out, { recursive: true, force: true }));
   const first = await build({ out }); const second = await build({ out }); assert.deepEqual(first.archive, second.archive);
   const entries = unzipStored(await readFile(resolve(out, "skybricate.zip")));
-  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "scripts/player-panel.js", "scripts/player-provider.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
+  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/property-selection.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "scripts/player-panel.js", "scripts/player-provider.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
   for (const [path, data] of entries) assert.deepEqual(data, await readFile(resolve(ROOT, path)));
   const manifest = JSON.parse(entries.get("module.json"));
   assert.deepEqual(await readFile(resolve(out, "module.json")), entries.get("module.json"));
@@ -172,6 +173,7 @@ test("init registers a hidden world setting and API is exposed only after readin
   f.hooks.fire("ready"); f.finish(); await flush();
   const api = f.game.modules.get("skybricate").api;
   assert(api.data instanceof DataStore); assert(Object.isFrozen(api));
+  assert.equal(typeof api.selectProperties, 'function');
   assert.deepEqual(api.data.getSnapshot(), emptyData());
 });
 

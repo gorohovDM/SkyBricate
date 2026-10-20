@@ -4,6 +4,8 @@ import { createAssignmentApplication, registerAssignmentMenu } from './assignmen
 import { createKnowledgeApplication, registerKnowledgeMenu } from './knowledge-adapter.js';
 import { installPlayerProvider } from './player-provider.js';
 
+import { selectProperties } from './property-selection.js';
+
 export const MODULE_ID = "skybricate";
 export const FABRICATE_VERSION = "1.9.10";
 
@@ -60,7 +62,7 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
         }
         return new KnowledgeApplication().render({ force: true });
       };
-      if (module) module.api = Object.freeze({ data, openAssignments, openKnowledge });
+      if (module) module.api = Object.freeze({ data, openAssignments, openKnowledge, selectProperties });
       if (getGame().user?.isGM) installManagerAdapter({ hooks, getGame, data, notifications,
         openAssignments,
         compatible: () => checkCompatibility(getGame()) === null });
