@@ -62,7 +62,18 @@
       "OrdinaryProperty": "Ordinary property",
       "SpecialProperty": "Special property",
       "ChooseProperty": "Select a property",
-      "RemoveAssignment": "Remove assignment"
+      "RemoveAssignment": "Remove assignment",
+      "KnowledgeTitle": "SkyBricate character knowledge",
+      "OpenKnowledge": "Open character knowledge",
+      "KnowledgeMenuHint": "Manually reveal or hide assigned properties for a selected world Actor.",
+      "KnowledgeHint": "Choose a world Actor, crafting system and component. Reveal or hide each assigned property. Changes save immediately; several GMs use last-write-wins.",
+      "Actor": "Character (world Actor)",
+      "NoActors": "No world Actors.",
+      "NoKnowledgeAssignments": "No visible assigned properties for this selection.",
+      "Known": "Known",
+      "Unknown": "Unknown",
+      "RevealKnowledge": "Reveal",
+      "HideKnowledge": "Hide"
     }
   }
 }

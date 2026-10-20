@@ -1,4 +1,4 @@
-import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, readData, validateData, validateLegacyData } from "./data-model.js";
+import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, readData, validateData, validateLegacyData, pruneKnowledge } from "./data-model.js";
 import { persistedComponents, persistedSystems } from './assignment-contract.js';
 
 export const SETTING_NAMESPACE = "skybricate";
@@ -55,9 +55,30 @@ export class DataStore {
     return this.#enqueue(async game => {
       const data = this.getSnapshot();
       const result = change(data);
+      pruneKnowledge(data);
       validateData(data);
       await game.settings.set(SETTING_NAMESPACE, SETTING_KEY, copy(data));
       return copy(result);
+    });
+  }
+
+  setPropertyKnowledge(actorId, systemId, componentId, propertyId, known, { canWrite = () => true } = {}) {
+    return this.#write(data => {
+      [actorId, systemId, componentId, propertyId].forEach(assertKey);
+      if (typeof known !== 'boolean') throw new Error('Knowledge must be boolean');
+      const game = this.#getGame();
+      if (!canWrite() || !game.actors?.get(actorId)
+        || !persistedComponents(game, systemId).has(componentId)) throw new Error('Knowledge context is no longer available');
+      const system = data.systems[systemId];
+      requireProperty(system, propertyId);
+      if (![...(system.components[componentId] ?? []), ...(system.specialComponents[componentId] ?? [])].includes(propertyId)) {
+        throw new Error('Knowledge requires an assignment');
+      }
+      const systems = data.knowledge[actorId] ??= {};
+      const components = systems[systemId] ??= {};
+      const ids = components[componentId] ??= [];
+      if (known && !ids.includes(propertyId)) ids.push(propertyId);
+      if (!known) components[componentId] = ids.filter(id => id !== propertyId);
     });
   }
 
@@ -186,6 +207,11 @@ export class DataStore {
     return this.#write(data => {
       if (!canWrite()) throw new Error('Component context is no longer available');
       const systems = persistedSystems(this.#getGame());
+      // The validated full corpus is authoritative for knowledge contexts.
+      // Preserve old catalogs/assignments for absent systems, as before.
+      for (const knownSystems of Object.values(data.knowledge)) {
+        for (const systemId of Object.keys(knownSystems)) if (!systems.has(systemId)) delete knownSystems[systemId];
+      }
       for (const [id, system] of systems) {
         for (const assignments of [data.systems[id]?.components, data.systems[id]?.specialComponents]) {
           for (const componentId of Object.keys(assignments ?? {})) {

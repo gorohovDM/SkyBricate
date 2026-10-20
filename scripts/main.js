@@ -1,6 +1,7 @@
 import { DataStore, registerDataSetting } from "./data-store.js";
 import { installManagerAdapter } from "./manager-adapter.js";
 import { createAssignmentApplication, registerAssignmentMenu } from './assignment-adapter.js';
+import { createKnowledgeApplication, registerKnowledgeMenu } from './knowledge-adapter.js';
 
 export const MODULE_ID = "skybricate";
 export const FABRICATE_VERSION = "1.9.10";
@@ -26,7 +27,7 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
   let waiting = false;
   let terminal = false;
   const status = { ready: false, reason: null };
-  let data = null, AssignmentApplication = null;
+  let data = null, AssignmentApplication = null, KnowledgeApplication = null;
   const fail = (reason) => {
     terminal = true;
     status.reason = reason;
@@ -51,7 +52,13 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
         }
         return new AssignmentApplication().render({ force: true });
       };
-      if (module) module.api = Object.freeze({ data, openAssignments });
+      const openKnowledge = () => {
+        if (!KnowledgeApplication || !getGame().user?.isGM || checkCompatibility(getGame()) !== null) {
+          throw new Error('SkyBricate knowledge is unavailable');
+        }
+        return new KnowledgeApplication().render({ force: true });
+      };
+      if (module) module.api = Object.freeze({ data, openAssignments, openKnowledge });
       if (getGame().user?.isGM) installManagerAdapter({ hooks, getGame, data, notifications,
         openAssignments,
         compatible: () => checkCompatibility(getGame()) === null });
@@ -67,6 +74,9 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
       AssignmentApplication = createAssignmentApplication({ ApplicationV2, getGame, getData: () => data,
         compatible: () => checkCompatibility(getGame()) === null });
       registerAssignmentMenu(getGame().settings, AssignmentApplication);
+      KnowledgeApplication = createKnowledgeApplication({ ApplicationV2, getGame, getData: () => data,
+        compatible: () => checkCompatibility(getGame()) === null });
+      registerKnowledgeMenu(getGame().settings, KnowledgeApplication);
     }
   });
   hooks.once("ready", () => { foundryReady = true; attempt(); });
