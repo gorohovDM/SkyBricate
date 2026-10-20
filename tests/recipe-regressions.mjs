@@ -48,15 +48,15 @@ test('recipe allowlist filters before shared limit; absence preserves legacy, em
   for (const allowedPropertyIds of [['missing'], ['p1', 'p1'], null, {}]) assert.throws(() => select({ allowedPropertyIds }));
 });
 
-test('schema 4 migration preserves knowledge and assignments without writes; only successful recipe save persists schema 5', async () => {
+test('schema 4 migration preserves knowledge and assignments without writes; only successful recipe save persists schema 6', async () => {
   const f = await fixture(); await f.data.setPropertyKnowledge('actor', 'a', 'c', 'p1', true);
   const old = f.stored; old.schemaVersion = 4; for (const system of Object.values(old.systems)) delete system.recipeRules;
   f.stored = old; const writes = f.writes, snapshot = f.data.getSnapshot();
-  assert.equal(snapshot.schemaVersion, 5); assert.deepEqual(snapshot.knowledge, old.knowledge); assert.deepEqual(snapshot.systems.a.recipeRules, {});
+  assert.equal(snapshot.schemaVersion, 6); assert.deepEqual(snapshot.knowledge, old.knowledge); assert.deepEqual(snapshot.systems.a.recipeRules, {});
   assert.deepEqual(f.stored, old); assert.equal(f.writes, writes);
   f.reject = true; await assert.rejects(f.data.configureRecipeRules('a', 'a1', rules(['p1']))); assert.deepEqual(f.stored, old);
   f.reject = false; await f.data.configureRecipeRules('a', 'a1', rules(['p1']));
-  assert.equal(f.stored.schemaVersion, 5); assert.deepEqual(f.stored.knowledge, old.knowledge);
+  assert.equal(f.stored.schemaVersion, 6); assert.deepEqual(f.stored.knowledge, old.knowledge);
   for (const mutate of [v => v.systems.a.recipeRules.a1.extra = 1,
     v => v.systems.a.recipeRules.a1.allowedPropertyIds = ['missing'],
     v => v.systems.a.recipeRules.a1.outcomeLimits = { pass: -1 }]) {

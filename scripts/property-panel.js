@@ -5,7 +5,7 @@ export function mountPropertyPanel({ target, systemId, data, canWrite, text }) {
   panel.className = "skybricate-property-panel manager-vocabulary-panel";
   panel.setAttribute("aria-label", text("Title"));
   let disposed = false, pending = false, editing = null, deleting = null, resetRequested = false;
-  let name, description, controls, message, refresh;
+  let name, description, essence, controls, message, refresh;
   const el = (tag, content, parent = panel, className = "") => {
     const node = document.createElement(tag);
     if (content !== undefined) node.textContent = content;
@@ -39,6 +39,15 @@ export function mountPropertyPanel({ target, systemId, data, canWrite, text }) {
       const descriptionLabel = el("label", undefined, fields, "manager-field"); el("span", text("Description"), descriptionLabel);
       description = el("textarea", undefined, descriptionLabel); description.rows = 1; description.dataset.skyField = "description";
       description.value = property?.description ?? "";
+      const essenceLabel = el('label', undefined, fields, 'manager-field'); el('span', text('Essence'), essenceLabel);
+      essence = el('select', undefined, essenceLabel); essence.dataset.skyField = 'essenceId';
+      const none = el('option', text('NoEssence'), essence); none.value = '';
+      const essences = data.getEssences?.(systemId) ?? [];
+      for (const row of essences) { const option = el('option', `${row.name} (${row.id})`, essence); option.value = row.id; }
+      if (property?.essenceId && !essences.some(row => row.id === property.essenceId)) {
+        const missing = el('option', `${text('MissingEssence')} (${property.essenceId})`, essence); missing.value = property.essenceId;
+      }
+      essence.value = property?.essenceId ?? '';
       button(fields, editing === null ? "Add" : "Save", "save", "manager-button is-primary");
       if (editing !== null) button(fields, "Cancel", "cancel");
       const searchRow = el("div", undefined, controls, "manager-vocabulary-search-row");
@@ -104,6 +113,7 @@ export function mountPropertyPanel({ target, systemId, data, canWrite, text }) {
       else if (action === "confirm-delete") await data.deleteProperty(systemId, deleting);
       else {
         const values = { name: name.value.trim(), description: description.value };
+        if (essence.value || editing !== null) values.essenceId = essence.value || null;
         if (editing === null) await data.createProperty(systemId, values);
         else await data.updateProperty(systemId, editing, values);
       }

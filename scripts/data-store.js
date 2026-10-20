@@ -1,6 +1,7 @@
 import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, readData, validateData, validateLegacyData, pruneKnowledge, validateRecipeRules } from "./data-model.js";
 import { persistedComponents, persistedSystems } from './assignment-contract.js';
 import { persistedRecipes, recipeContext, validateOutcomeLimits } from './recipe-contract.js';
+import { systemEssences } from './craft-adapter.js';
 
 export const SETTING_NAMESPACE = "skybricate";
 export const SETTING_KEY = "data";
@@ -47,6 +48,8 @@ export class DataStore {
     const data = stored === undefined ? emptyData() : stored;
     return readData(data);
   }
+
+  getEssences(systemId) { return systemEssences(this.#getGame(), systemId); }
 
   #enqueue(operation) {
     const queued = this.#tail.then(() => {
@@ -107,11 +110,13 @@ export class DataStore {
   createProperty(systemId, input) {
     const values = copy(input);
     return this.#write(data => {
-      assertFields(values, ["name", "description"]);
+      assertFields(values, ["name", "description", "essenceId"]);
+      this.#validateEssenceLink(systemId, values.essenceId);
       const system = this.#system(data, systemId);
       const id = assertKey(this.#idFactory());
       if (Object.hasOwn(system.properties, id)) throw new Error("Property ID collision");
       system.properties[id] = { name: values.name, description: Object.hasOwn(values, "description") ? values.description : "" };
+      if (values.essenceId) system.properties[id].essenceId = values.essenceId;
       return id;
     });
   }
@@ -122,9 +127,19 @@ export class DataStore {
       assertKey(systemId);
       const system = data.systems[systemId];
       requireProperty(system, id);
-      assertFields(values, ["name", "description"]);
+      assertFields(values, ["name", "description", "essenceId"]);
+      if (Object.hasOwn(values, 'essenceId')) this.#validateEssenceLink(systemId, values.essenceId);
       Object.assign(system.properties[id], values);
+      if (values.essenceId === null) delete system.properties[id].essenceId;
     });
+  }
+
+  #validateEssenceLink(systemId, essenceId) {
+    if (essenceId === undefined || essenceId === null) return;
+    assertKey(essenceId);
+    if (!this.getEssences(systemId).some(row => row.id === essenceId)) {
+      throw new Error('Choose an essence of the current Fabricate system');
+    }
   }
 
   deleteProperty(systemId, id) {
