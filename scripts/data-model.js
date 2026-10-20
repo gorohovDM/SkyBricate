@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 export const copy = value => structuredClone(value);
 
@@ -31,7 +31,7 @@ export function emptyData() {
 }
 
 export function emptySystem() {
-  return { properties: {}, categories: {}, components: {}, rules: {
+  return { properties: {}, categories: {}, components: {}, specialComponents: {}, rules: {
     limitByCheck: false, successLimit: 0, outcomeLimits: {}, prioritySpecial: false, propertyOrder: []
   } };
 }
@@ -52,11 +52,11 @@ function limit(value) {
 }
 
 // Validate without normalization: corrupt/future data must never be silently reset.
-export function validateData(data) { return validateShape(data, false); }
+export function validateData(data) { return validateShape(data, SCHEMA_VERSION); }
 
 // Strict recognition is only for an explicit, confirmed deletion of old test data.
 // It does not convert or normalize the old catalog.
-export function validateLegacyData(data) { return validateShape(data, true); }
+export function validateLegacyData(data) { return validateShape(data, 1); }
 
 function properties(values) {
   record(values);
@@ -67,18 +67,23 @@ function properties(values) {
     }
   }
 }
-function validateShape(data, legacy) {
+function validateShape(data, version) {
+  const legacy = version === 1;
   exactFields(data, legacy ? ["schemaVersion", "properties", "systems"] : ["schemaVersion", "systems"]);
-  if (data.schemaVersion !== (legacy ? 1 : SCHEMA_VERSION)) throw new Error("Unsupported SkyBricate schema version");
+  if (data.schemaVersion !== version) throw new Error("Unsupported SkyBricate schema version");
   if (legacy) properties(data.properties);
   record(data.systems);
   for (const system of Object.values(data.systems)) {
-    exactFields(system, legacy ? ["categories", "components", "rules"] : ["properties", "categories", "components", "rules"]);
+    exactFields(system, legacy ? ["categories", "components", "rules"] : version === 2
+      ? ["properties", "categories", "components", "rules"] : ["properties", "categories", "components", "specialComponents", "rules"]);
     if (!legacy) properties(system.properties);
     const catalog = legacy ? data : system;
-    for (const assignments of [system.categories, system.components]) {
+    for (const assignments of [system.categories, system.components, ...(version === 3 ? [system.specialComponents] : [])]) {
       record(assignments);
       for (const ids of Object.values(assignments)) references(catalog, ids);
+    }
+    if (version === 3) for (const [id, special] of Object.entries(system.specialComponents)) {
+      if (special.some(property => (system.components[id] ?? []).includes(property))) throw new Error("Duplicate assignment type");
     }
     const rules = system.rules;
     exactFields(rules, ["limitByCheck", "successLimit", "outcomeLimits", "prioritySpecial", "propertyOrder"]);
@@ -89,4 +94,14 @@ function validateShape(data, legacy) {
     references(catalog, rules.propertyOrder);
   }
   return data;
+}
+
+// Schema 2 is read losslessly as ordinary links; schema 3 is persisted only on a successful write.
+export function readData(stored) {
+  if (stored?.schemaVersion !== 2) return copy(validateData(stored));
+  validateShape(stored, 2);
+  const data = copy(stored);
+  data.schemaVersion = SCHEMA_VERSION;
+  for (const system of Object.values(data.systems)) system.specialComponents = {};
+  return validateData(data);
 }

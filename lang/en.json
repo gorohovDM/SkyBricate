@@ -36,7 +36,7 @@
       "Reset": "Reset old test data",
       "ResetWarning": "Permanently delete ALL old SkyBricate test properties, assignments and rules in this world? Only skybricate.data is reset. Fabricate data is not affected.",
       "ConfirmReset": "Delete old test data and start empty",
-      "AssignmentHint": "Select a saved crafting system and component. Save properties separately. Changing system or component, reloading, reconciling or closing discards unsaved selections.",
+      "AssignmentHint": "Select a saved crafting system and component, then add property rows and save. Empty rows are ignored. Changing context, reloading or closing discards drafts. Changing special-section visibility reloads special drafts; hidden assignments are preserved.",
       "ComponentProperties": "Component properties",
       "SaveProperties": "Save properties",
       "ReloadAssignments": "Reload properties",
@@ -56,7 +56,13 @@
       "Component": "Component",
       "ClearAssignments": "Clear selection",
       "NoSystems": "No saved crafting systems.",
-      "NoComponents": "No saved components in this system."
+      "NoComponents": "No saved components in this system.",
+      "SpecialSetting": "Show special properties",
+      "SpecialSettingHint": "Show the special assignment section for GMs. Turning it off preserves saved assignments and their type; algorithm priority is separate.",
+      "OrdinaryProperty": "Ordinary property",
+      "SpecialProperty": "Special property",
+      "ChooseProperty": "Select a property",
+      "RemoveAssignment": "Remove assignment"
     }
   }
 }

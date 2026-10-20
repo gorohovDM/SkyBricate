@@ -41,7 +41,7 @@ try {
   game.modules = new Map([['fabricate', { active: true, version: '1.9.10' }]]);
   game.settings = {
     settings: new Map([['fabricate.craftingSystems', { scope: 'world', type: Array }]]),
-    get: ns => structuredClone(ns === 'fabricate' ? persisted : sky),
+    get: (ns, key) => key === 'showSpecialProperties' ? true : structuredClone(ns === 'fabricate' ? persisted : sky),
     set: async (ns, key, value) => {
       if (ns === 'fabricate') { assert.equal(key, 'craftingSystems'); if (reject) throw Error('native disk failure'); persisted = structuredClone(value); nativeWrites++; }
       else { assert.equal(ns, 'skybricate'); if (rejectSky) throw Error('sky disk failure'); sky = structuredClone(value); }
@@ -53,9 +53,12 @@ try {
   game.fabricate = { getCraftingSystemManager: () => manager };
   assert.equal(manager.componentAssignmentContract, undefined);
   const data = new DataStore({ getGame: () => game, idFactory: () => 'p' });
+  const specialCatalog = new DataStore({ getGame: () => game, idFactory: () => 's' });
+  const assign = (system, component) => data.setComponentAssignments(system, component, { ordinary: ['p'], special: ['s'] }, { editSpecial: true });
   for (const id of ['a', 'b']) {
     await data.createProperty(id, { name: 'Hidden' });
-    for (const component of ['one', 'two']) await data.setComponentProperties(id, component, ['p']);
+    await specialCatalog.createProperty(id, { name: 'Special' });
+    for (const component of ['one', 'two']) await assign(id, component);
   }
   const mount = () => mountAssignmentPanel({ target: f.root, getGame: () => game, data, canWrite: () => game.user.isGM, text: key => key });
   panel = mount(); await settleDOM();
@@ -72,30 +75,30 @@ try {
   await manager.deleteItem('a', 'one');
   assert.deepEqual(sky.systems.a.components.one, ['p'], 'explicit reconciliation has no fabricated deletion hook');
   rejectSky = true; await panel.refresh(); assert(sky.systems.a.components.one);
-  rejectSky = false; await panel.refresh(); assert.equal(sky.systems.a.components.one, undefined);
-  assert.deepEqual(sky.systems.a.components.two, ['p']); assert.deepEqual(sky.systems.b.components.one, ['p']);
+  rejectSky = false; await panel.refresh(); assert.equal(sky.systems.a.components.one, undefined); assert.equal(sky.systems.a.specialComponents.one, undefined);
+  assert.deepEqual(sky.systems.a.components.two, ['p']); assert.deepEqual(sky.systems.b.components.one, ['p']); assert.deepEqual(sky.systems.b.specialComponents.one, ['s']);
   // Rename/category changes preserve the saved ID and its assignment.
   const system = manager.systems.get('a'); system.components[0].name = 'Renamed'; system.components[0].category = 'herb';
   await manager.save({ put: system }); await panel.refresh(); assert.deepEqual(sky.systems.a.components.two, ['p']);
   const bulk = [{ id: 'two', name: 'Same' }, { id: 'three', name: 'Same' }];
-  system.components = structuredClone(bulk); await manager.save({ put: system }); await data.setComponentProperties('a', 'three', ['p']);
+  system.components = structuredClone(bulk); await manager.save({ put: system }); await assign('a', 'three');
   reject = true; await assert.rejects(manager.deleteComponents('a', ['two', 'three'])); await panel.refresh();
   assert(sky.systems.a.components.two); assert(sky.systems.a.components.three);
   reject = false; system.components = structuredClone(bulk);
-  await manager.deleteComponents('a', ['two', 'three']); await panel.refresh(); assert.deepEqual(sky.systems.a.components, {});
-  assert.deepEqual(sky.systems.b.components.one, ['p']);
+  await manager.deleteComponents('a', ['two', 'three']); await panel.refresh(); assert.deepEqual(sky.systems.a.components, {}); assert.deepEqual(sky.systems.a.specialComponents, {});
+  assert.deepEqual(sky.systems.b.components.one, ['p']); assert.deepEqual(sky.systems.b.specialComponents.one, ['s']);
   // Actual stock repository batch writes one complete array; SkyBricate uses its persisted result.
   const corpus = new Map([['a', { id: 'a', components: [{ id: 'x' }, { id: 'y' }] }], ['b', persisted[1]]]);
   const repo = new SettingsCraftingDefinitionRepository({ settingKey: 'craftingSystems', corpus: () => corpus });
   await repo.putAll([...corpus.values()]);
-  await data.setComponentProperties('a', 'x', ['p']); await data.setComponentProperties('a', 'y', ['p']);
+  await assign('a', 'x'); await assign('a', 'y');
   const before = nativeWrites;
   await repo.runBatch(async () => { corpus.get('a').components = []; await repo.put(corpus.get('a')); assert.equal(nativeWrites, before); });
-  assert.equal(nativeWrites, before + 1); await panel.refresh(); assert.deepEqual(sky.systems.a.components, {});
+  assert.equal(nativeWrites, before + 1); await panel.refresh(); assert.deepEqual(sky.systems.a.components, {}); assert.deepEqual(sky.systems.a.specialComponents, {});
   // Closed client misses a deletion; opening a fresh editor repairs from persisted bytes.
   corpus.get('a').components = [{ id: 'missed' }]; await repo.put(corpus.get('a'));
-  await data.setComponentProperties('a', 'missed', ['p']); panel.dispose(); panel = null;
+  await assign('a', 'missed'); panel.dispose(); panel = null;
   corpus.get('a').components = []; await repo.put(corpus.get('a')); assert(sky.systems.a.components.missed);
-  panel = mount(); await settleDOM(); assert.equal(sky.systems.a.components.missed, undefined);
+  panel = mount(); await settleDOM(); assert.equal(sky.systems.a.components.missed, undefined); assert.equal(sky.systems.a.specialComponents.missed, undefined);
   console.log('PASS stock 1.9.10: strict setting contract, standalone editor, cancelled/failed/successful single + bulk deletion, rename/category, failed cleanup/retry, repository batch, source-system isolation, reopen reconciliation.');
 } finally { panel?.dispose(); f.destroy(); await rm(temp, { recursive: true, force: true }); }
