@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 export const copy = value => structuredClone(value);
 
@@ -73,10 +73,11 @@ export function validateData(data) { return validateShape(data, SCHEMA_VERSION);
 // It does not convert or normalize the old catalog.
 export function validateLegacyData(data) { return validateShape(data, 1); }
 
-function properties(values) {
+function properties(values, version = 1) {
   record(values);
   for (const property of Object.values(values)) {
-    exactFields(property, ["name", "description"]);
+    assertFields(property, ["name", "description", ...(version >= 6 ? ['essenceId'] : [])]);
+    if (Object.hasOwn(property, 'essenceId')) assertKey(property.essenceId);
     if (typeof property.name !== "string" || !property.name.trim() || typeof property.description !== "string") {
       throw new Error("Property requires a non-empty name and string description");
     }
@@ -91,7 +92,9 @@ function validateShape(data, version) {
   for (const system of Object.values(data.systems)) {
     exactFields(system, legacy ? ["categories", "components", "rules"] : version === 2
       ? ["properties", "categories", "components", "rules"] : ["properties", "categories", "components", "specialComponents", "rules", ...(version >= 5 ? ['recipeRules'] : [])]);
-    if (!legacy) properties(system.properties);
+    if (!legacy) properties(system.properties, version);
+    const linked = Object.values(system.properties ?? {}).map(p => p.essenceId).filter(Boolean);
+    if (new Set(linked).size !== linked.length) throw new Error('An essence can be linked to only one property per system');
     const catalog = legacy ? data : system;
     for (const assignments of [system.categories, system.components, ...(version >= 3 ? [system.specialComponents] : [])]) {
       record(assignments);
@@ -133,13 +136,13 @@ function validateShape(data, version) {
 
 // Old valid schemas are read losslessly; migration persists only on a successful write.
 export function readData(stored) {
-  if (![2, 3, 4].includes(stored?.schemaVersion)) return copy(validateData(stored));
+  if (![2, 3, 4, 5].includes(stored?.schemaVersion)) return copy(validateData(stored));
   validateShape(stored, stored.schemaVersion);
   const data = copy(stored);
   data.schemaVersion = SCHEMA_VERSION;
   if (stored.schemaVersion === 2) for (const system of Object.values(data.systems)) system.specialComponents = {};
   if (stored.schemaVersion < 4) data.knowledge = {};
-  for (const system of Object.values(data.systems)) system.recipeRules = {};
+  if (stored.schemaVersion < 5) for (const system of Object.values(data.systems)) system.recipeRules = {};
   return validateData(data);
 }
 

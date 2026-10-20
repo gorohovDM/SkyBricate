@@ -6,11 +6,11 @@ import { installPlayerProvider } from './player-provider.js';
 import { createRecipeApplication } from './recipe-adapter.js';
 
 import { selectProperties } from './property-selection.js';
+import { installCraftAdapter } from './craft-adapter.js';
 
 export const MODULE_ID = "skybricate";
 export const FABRICATE_VERSION = "1.9.10";
 
-// Crafting adapters belong to later stages.
 export function checkCompatibility(game) {
   const dependency = game.modules?.get("fabricate");
   if (!dependency?.active) return "dependency";
@@ -21,6 +21,7 @@ export function checkCompatibility(game) {
     || typeof fabricate?.getCraftingSystemManager !== "function"
     || typeof fabricate?.getRecipeManager !== "function"
     || typeof fabricate?.getCraftingRunManager !== "function"
+    || typeof fabricate?.getCraftingEngine !== "function"
     || typeof fabricate?.api?.playerExtensions?.registerPlayerNavProvider !== "function") return "api";
   return null;
 }
@@ -50,6 +51,7 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
       if (problem) return fail(problem);
       const module = getGame().modules.get(MODULE_ID);
       data = new DataStore({ getGame });
+      installCraftAdapter({ engine: fabricate.getCraftingEngine(), getGame, data, logger });
       installPlayerProvider({ getGame, data, hooks, compatible: () => checkCompatibility(getGame()) === null });
       const openAssignments = () => {
         if (!AssignmentApplication || !getGame().user?.isGM || checkCompatibility(getGame()) !== null) {

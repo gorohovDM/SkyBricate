@@ -13,6 +13,7 @@ import "./knowledge-regressions.mjs";
 import "./player-regressions.mjs";
 import "./selection-regressions.mjs";
 import "./recipe-regressions.mjs";
+import "./craft-regressions.mjs";
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function fixture({ getApplicationV2 } = {}) {
@@ -22,9 +23,10 @@ function fixture({ getApplicationV2 } = {}) {
     count(name) { return handlers.get(name)?.length ?? 0; } };
   let finish;
   const ready = new Promise(resolve => { finish = resolve; });
+  const engine = { craft() {}, craftAlchemy() {}, _resolveCraftSelection() {}, _runCraftingCheck() {}, _sourceUuidForEssenceDefinition() {} };
   const game = { modules: new Map([["fabricate", { active: true, version: "1.9.10" }]]),
     release: { generation: 13 }, user: { isGM: true }, i18n: { localize: key => key },
-    fabricate: { whenReady: () => ready, getCraftingSystemManager() {}, getRecipeManager() {}, getCraftingRunManager() {},
+    fabricate: { whenReady: () => ready, getCraftingSystemManager() {}, getRecipeManager() {}, getCraftingRunManager() {}, getCraftingEngine: () => engine,
       api: { playerExtensions: { registerPlayerNavProvider() { return () => {}; } } } } };
   const warnings = [], infos = [], providers = [];
   game.fabricate.api.playerExtensions.registerPlayerNavProvider = provider => { providers.push(provider); return () => {}; };
@@ -111,7 +113,7 @@ test("release ZIP is reproducible, exact allowlist and manifest paths exist", as
   const out = await mkdtemp(resolve(tmpdir(), "skybricate-build-")); t.after(() => rm(out, { recursive: true, force: true }));
   const first = await build({ out }); const second = await build({ out }); assert.deepEqual(first.archive, second.archive);
   const entries = unzipStored(await readFile(resolve(out, "skybricate.zip")));
-  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/property-selection.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "scripts/player-panel.js", "scripts/player-provider.js", "scripts/recipe-contract.js", "scripts/recipe-panel.js", "scripts/recipe-adapter.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
+  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/craft-adapter.js", "scripts/property-selection.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "scripts/player-panel.js", "scripts/player-provider.js", "scripts/recipe-contract.js", "scripts/recipe-panel.js", "scripts/recipe-adapter.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
   for (const [path, data] of entries) assert.deepEqual(data, await readFile(resolve(ROOT, path)));
   const manifest = JSON.parse(entries.get("module.json"));
   assert.deepEqual(await readFile(resolve(out, "module.json")), entries.get("module.json"));
@@ -390,17 +392,17 @@ test("build fails if a runtime import is omitted from allowlist", async t => {
   await assert.rejects(build({ root }), /Import is not packaged/);
 });
 
-test('schema 2 reads losslessly as ordinary links without writes; first successful edit persists schema 5', async () => {
+test('schema 2 reads losslessly as ordinary links without writes; first successful edit persists schema 6', async () => {
   const system=emptySystem(); delete system.specialComponents; delete system.recipeRules;
   system.properties.p={name:'P',description:'Description'}; system.components.item=['p']; system.categories.herbs=['p'];
   system.rules.prioritySpecial=true; system.rules.propertyOrder=['p'];
   const old={schemaVersion:2,systems:{a:system}}, f=storageFixture(old);
-  const snapshot=f.store.getSnapshot(); assert.equal(snapshot.schemaVersion,5); assert.deepEqual(snapshot.systems.a.specialComponents,{});
+  const snapshot=f.store.getSnapshot(); assert.equal(snapshot.schemaVersion,6); assert.deepEqual(snapshot.systems.a.specialComponents,{});
   assert.deepEqual(snapshot.systems.a.components,system.components); assert.deepEqual(snapshot.systems.a.rules,system.rules);
   assert.deepEqual(f.persisted,old); assert.equal(f.writes,0);
   f.rejectSave=true; await assert.rejects(f.store.updateProperty('a','p',{name:'Renamed'})); assert.deepEqual(f.persisted,old);
   f.rejectSave=false; await f.store.updateProperty('a','p',{name:'Renamed'});
-  assert.equal(f.persisted.schemaVersion,5); assert.deepEqual(f.persisted.systems.a.components.item,['p']); assert.deepEqual(f.persisted.systems.a.specialComponents,{});
+  assert.equal(f.persisted.schemaVersion,6); assert.deepEqual(f.persisted.systems.a.components.item,['p']); assert.deepEqual(f.persisted.systems.a.specialComponents,{});
 });
 
 test('strict schema 2/3 recognition never drops unknown fields, malformed special links or conflicting types', async () => {
