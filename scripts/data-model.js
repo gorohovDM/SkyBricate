@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 export const copy = value => structuredClone(value);
 
@@ -27,7 +27,7 @@ function exactFields(value, fields) {
 }
 
 export function emptyData() {
-  return { schemaVersion: SCHEMA_VERSION, systems: {} };
+  return { schemaVersion: SCHEMA_VERSION, systems: {}, knowledge: {} };
 }
 
 export function emptySystem() {
@@ -69,7 +69,7 @@ function properties(values) {
 }
 function validateShape(data, version) {
   const legacy = version === 1;
-  exactFields(data, legacy ? ["schemaVersion", "properties", "systems"] : ["schemaVersion", "systems"]);
+  exactFields(data, legacy ? ["schemaVersion", "properties", "systems"] : version === 4 ? ["schemaVersion", "systems", "knowledge"] : ["schemaVersion", "systems"]);
   if (data.schemaVersion !== version) throw new Error("Unsupported SkyBricate schema version");
   if (legacy) properties(data.properties);
   record(data.systems);
@@ -78,11 +78,11 @@ function validateShape(data, version) {
       ? ["properties", "categories", "components", "rules"] : ["properties", "categories", "components", "specialComponents", "rules"]);
     if (!legacy) properties(system.properties);
     const catalog = legacy ? data : system;
-    for (const assignments of [system.categories, system.components, ...(version === 3 ? [system.specialComponents] : [])]) {
+    for (const assignments of [system.categories, system.components, ...(version >= 3 ? [system.specialComponents] : [])]) {
       record(assignments);
       for (const ids of Object.values(assignments)) references(catalog, ids);
     }
-    if (version === 3) for (const [id, special] of Object.entries(system.specialComponents)) {
+    if (version >= 3) for (const [id, special] of Object.entries(system.specialComponents)) {
       if (special.some(property => (system.components[id] ?? []).includes(property))) throw new Error("Duplicate assignment type");
     }
     const rules = system.rules;
@@ -93,15 +93,48 @@ function validateShape(data, version) {
     for (const value of Object.values(rules.outcomeLimits)) limit(value);
     references(catalog, rules.propertyOrder);
   }
+  if (version === 4) {
+    record(data.knowledge);
+    for (const systems of Object.values(data.knowledge)) {
+      record(systems);
+      for (const [systemId, components] of Object.entries(systems)) {
+        record(components);
+        const system = data.systems[systemId];
+        if (!system) throw new Error('Unknown knowledge system');
+        for (const [componentId, ids] of Object.entries(components)) {
+          references(system, ids);
+          const assigned = [...(system.components[componentId] ?? []), ...(system.specialComponents[componentId] ?? [])];
+          if (ids.some(id => !assigned.includes(id))) throw new Error('Knowledge requires an assignment');
+        }
+      }
+    }
+  }
   return data;
 }
 
-// Schema 2 is read losslessly as ordinary links; schema 3 is persisted only on a successful write.
+// Old valid schemas are read losslessly; migration persists only on a successful write.
 export function readData(stored) {
-  if (stored?.schemaVersion !== 2) return copy(validateData(stored));
-  validateShape(stored, 2);
+  if (![2, 3].includes(stored?.schemaVersion)) return copy(validateData(stored));
+  validateShape(stored, stored.schemaVersion);
   const data = copy(stored);
   data.schemaVersion = SCHEMA_VERSION;
-  for (const system of Object.values(data.systems)) system.specialComponents = {};
+  if (stored.schemaVersion === 2) for (const system of Object.values(data.systems)) system.specialComponents = {};
+  data.knowledge = {};
   return validateData(data);
+}
+
+// Assignment/catalog mutation and knowledge cleanup share a single persisted write.
+export function pruneKnowledge(data) {
+  for (const [actorId, systems] of Object.entries(data.knowledge)) {
+    for (const [systemId, components] of Object.entries(systems)) {
+      const system = data.systems[systemId];
+      for (const [componentId, ids] of Object.entries(components)) {
+        const assigned = [...(system?.components[componentId] ?? []), ...(system?.specialComponents[componentId] ?? [])];
+        components[componentId] = ids.filter(id => assigned.includes(id));
+        if (!components[componentId].length) delete components[componentId];
+      }
+      if (!Object.keys(components).length) delete systems[systemId];
+    }
+    if (!Object.keys(systems).length) delete data.knowledge[actorId];
+  }
 }

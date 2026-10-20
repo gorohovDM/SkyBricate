@@ -9,6 +9,7 @@ import { DataStore, registerDataSetting } from "../scripts/data-store.js";
 import { emptyData, emptySystem } from "../scripts/data-model.js";
 import "./editor-regressions.mjs";
 import "./assignment-regressions.mjs";
+import "./knowledge-regressions.mjs";
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function fixture({ getApplicationV2 } = {}) {
@@ -95,7 +96,7 @@ test("release ZIP is reproducible, exact allowlist and manifest paths exist", as
   const out = await mkdtemp(resolve(tmpdir(), "skybricate-build-")); t.after(() => rm(out, { recursive: true, force: true }));
   const first = await build({ out }); const second = await build({ out }); assert.deepEqual(first.archive, second.archive);
   const entries = unzipStored(await readFile(resolve(out, "skybricate.zip")));
-  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
+  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
   for (const [path, data] of entries) assert.deepEqual(data, await readFile(resolve(ROOT, path)));
   const manifest = JSON.parse(entries.get("module.json"));
   assert.deepEqual(await readFile(resolve(out, "module.json")), entries.get("module.json"));
@@ -162,16 +163,19 @@ test("init registers a hidden world setting and API is exposed only after readin
 test('lifecycle registers restricted standalone menu at init and exposes guarded openAssignments after ready', async () => {
   class Base { render(options) { this.renderOptions = options; return this; } }
   const f = fixture({ getApplicationV2: () => Base }), storage = storageFixture();
-  let menu;
-  f.game.settings = { ...storage.game.settings, registerMenu: (ns, key, options) => { menu = { ns, key, ...options }; } };
+  let menu; const menus = new Map();
+  f.game.settings = { ...storage.game.settings, registerMenu: (ns, key, options) => { menu = { ns, key, ...options }; menus.set(key, menu); } };
   f.game.modules.set('skybricate', {}); f.hooks.fire('init');
+  const knowledgeMenu = menus.get('knowledge'); menu = menus.get('assignments');
+  assert.equal(knowledgeMenu.restricted, true);
   assert.equal(menu.ns, 'skybricate'); assert.equal(menu.key, 'assignments'); assert.equal(menu.restricted, true);
   assert.equal(new menu.type()._canRender(), false);
   f.hooks.fire('ready'); f.finish(); await flush();
   const api = f.game.modules.get('skybricate').api, app = api.openAssignments();
   assert(app instanceof menu.type); assert.deepEqual(app.renderOptions, { force: true });
   assert.equal(app._canRender(), undefined);
-  f.game.user.isGM = false; assert.throws(() => api.openAssignments()); assert.equal(app._canRender(), false);
+  assert(api.openKnowledge() instanceof knowledgeMenu.type);
+  f.game.user.isGM = false; assert.throws(() => api.openAssignments()); assert.throws(() => api.openKnowledge()); assert.equal(app._canRender(), false);
   f.game.user.isGM = true; f.game.modules.get('fabricate').version = '2'; assert.throws(() => api.openAssignments());
 });
 
@@ -368,17 +372,17 @@ test("build fails if a runtime import is omitted from allowlist", async t => {
   await assert.rejects(build({ root }), /Import is not packaged/);
 });
 
-test('schema 2 reads losslessly as ordinary links without writes; first successful edit persists schema 3', async () => {
+test('schema 2 reads losslessly as ordinary links without writes; first successful edit persists schema 4', async () => {
   const system=emptySystem(); delete system.specialComponents;
   system.properties.p={name:'P',description:'Description'}; system.components.item=['p']; system.categories.herbs=['p'];
   system.rules.prioritySpecial=true; system.rules.propertyOrder=['p'];
   const old={schemaVersion:2,systems:{a:system}}, f=storageFixture(old);
-  const snapshot=f.store.getSnapshot(); assert.equal(snapshot.schemaVersion,3); assert.deepEqual(snapshot.systems.a.specialComponents,{});
+  const snapshot=f.store.getSnapshot(); assert.equal(snapshot.schemaVersion,4); assert.deepEqual(snapshot.systems.a.specialComponents,{});
   assert.deepEqual(snapshot.systems.a.components,system.components); assert.deepEqual(snapshot.systems.a.rules,system.rules);
   assert.deepEqual(f.persisted,old); assert.equal(f.writes,0);
   f.rejectSave=true; await assert.rejects(f.store.updateProperty('a','p',{name:'Renamed'})); assert.deepEqual(f.persisted,old);
   f.rejectSave=false; await f.store.updateProperty('a','p',{name:'Renamed'});
-  assert.equal(f.persisted.schemaVersion,3); assert.deepEqual(f.persisted.systems.a.components.item,['p']); assert.deepEqual(f.persisted.systems.a.specialComponents,{});
+  assert.equal(f.persisted.schemaVersion,4); assert.deepEqual(f.persisted.systems.a.components.item,['p']); assert.deepEqual(f.persisted.systems.a.specialComponents,{});
 });
 
 test('strict schema 2/3 recognition never drops unknown fields, malformed special links or conflicting types', async () => {
