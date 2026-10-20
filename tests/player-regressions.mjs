@@ -55,6 +55,8 @@ test('open player panel reacts to data onChange, Fabricate setting hooks, refres
   const f=setup(t);f.mount();let next=f.snapshot;next.knowledge.actor.a.c=[];f.replace(next);f.notify();assert.doesNotMatch(f.root.textContent,/Known <img>|Known special/);
   next=f.snapshot;next.knowledge.actor.a.c=['p'];f.replace(next);f.root.querySelector('button').click();assert.match(f.root.textContent,/Known <img>/);
   f.corpus[0].components=[];f.hooks.fire('updateSetting',{key:'fabricate.craftingSystems'});assert.match(f.root.textContent,/NoComponents/);
+  f.corpus[0].components=[{id:'c',name:'First persisted herb'}];f.hooks.fire('createSetting',{key:'fabricate.craftingSystems'});
+  assert.match(f.root.textContent,/First persisted herb/);
   f.corpus.splice(0,1);f.hooks.fire('updateSetting',{key:'fabricate.craftingSystems'});assert.equal(f.root.querySelector('select').value,'b');assert.doesNotMatch(f.root.textContent,/Known <img>/);
   f.actors.get('actor').isOwner=false;f.hooks.fire('updateUser',{id:'user'});assert.match(f.root.textContent,/NoActor/);assert.equal(f.writes,0);
 });
@@ -74,7 +76,7 @@ test('provider repeated mount, unmount and unregister remove all listeners and d
   const f=setup(t);const old=f.mount(),input=f.root.querySelector('input');f.mount('other');old();assert.equal(f.hooks.count('updateActor'),1);
   const contents=f.root.innerHTML;input.value='healing';input.dispatchEvent(new f.window.Event('input'));assert.equal(f.root.innerHTML,contents);
   f.dispose();f.dispose();assert.equal(f.unregisters,1);assert.equal(f.root.children.length,0);
-  for(const event of ['updateSetting','updateActor','deleteActor','updateUser'])assert.equal(f.hooks.count(event),0);
+  for(const event of ['createSetting','updateSetting','updateActor','deleteActor','updateUser'])assert.equal(f.hooks.count(event),0);
   f.notify();f.special=false;assert.equal(f.root.children.length,0);assert.equal(f.writes,0);
 });
 

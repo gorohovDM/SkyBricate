@@ -81,7 +81,9 @@ export function mountPlayerPanel({ target, context, getGame, data, hooks, text, 
   const settingChanged = setting => { if (setting?.key === 'fabricate.craftingSystems') reload(); };
   const actorChanged = actor => { if (actor?.id === context.actorId) reload(); };
   const userChanged = user => { if (user?.id === getGame().user?.id) reload(); };
-  const listeners = [['updateSetting', settingChanged], ['updateActor', actorChanged], ['deleteActor', actorChanged], ['updateUser', userChanged]];
+  // The first saved world value creates a Setting document (stock uses both).
+  const listeners = [['createSetting', settingChanged], ['updateSetting', settingChanged],
+    ['updateActor', actorChanged], ['deleteActor', actorChanged], ['updateUser', userChanged]];
   const unsubscribeData = subscribeData(reload), unsubscribeSpecial = subscribeSpecialSetting(reload);
   for (const [name, listener] of listeners) hooks.on(name, listener);
   system.addEventListener('change', changeSystem); search.addEventListener('input', render); refresh.addEventListener('click', reload);
