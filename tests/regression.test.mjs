@@ -12,6 +12,7 @@ import "./assignment-regressions.mjs";
 import "./knowledge-regressions.mjs";
 import "./player-regressions.mjs";
 import "./selection-regressions.mjs";
+import "./recipe-regressions.mjs";
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function fixture({ getApplicationV2 } = {}) {
@@ -110,7 +111,7 @@ test("release ZIP is reproducible, exact allowlist and manifest paths exist", as
   const out = await mkdtemp(resolve(tmpdir(), "skybricate-build-")); t.after(() => rm(out, { recursive: true, force: true }));
   const first = await build({ out }); const second = await build({ out }); assert.deepEqual(first.archive, second.archive);
   const entries = unzipStored(await readFile(resolve(out, "skybricate.zip")));
-  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/property-selection.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "scripts/player-panel.js", "scripts/player-provider.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
+  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/property-selection.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "scripts/player-panel.js", "scripts/player-provider.js", "scripts/recipe-contract.js", "scripts/recipe-panel.js", "scripts/recipe-adapter.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
   for (const [path, data] of entries) assert.deepEqual(data, await readFile(resolve(ROOT, path)));
   const manifest = JSON.parse(entries.get("module.json"));
   assert.deepEqual(await readFile(resolve(out, "module.json")), entries.get("module.json"));
@@ -357,7 +358,7 @@ test("property input/patch copies are captured before queued scoped writes", asy
 });
 
 test("explicit reset recognizes only complete valid legacy and clears only own setting", async () => {
-  const oldSystem=emptySystem(); delete oldSystem.properties; delete oldSystem.specialComponents;
+  const oldSystem=emptySystem(); delete oldSystem.properties; delete oldSystem.specialComponents; delete oldSystem.recipeRules;
   oldSystem.categories.herbs=["old"]; oldSystem.rules.propertyOrder=["old"];
   const legacy={schemaVersion:1,properties:{old:{name:"Test",description:""}},systems:{a:oldSystem}};
   const f=storageFixture(legacy); assert(f.store.hasLegacyData()); assert.throws(()=>f.store.getSnapshot()); assert.equal(f.writes,0);
@@ -389,17 +390,17 @@ test("build fails if a runtime import is omitted from allowlist", async t => {
   await assert.rejects(build({ root }), /Import is not packaged/);
 });
 
-test('schema 2 reads losslessly as ordinary links without writes; first successful edit persists schema 4', async () => {
-  const system=emptySystem(); delete system.specialComponents;
+test('schema 2 reads losslessly as ordinary links without writes; first successful edit persists schema 5', async () => {
+  const system=emptySystem(); delete system.specialComponents; delete system.recipeRules;
   system.properties.p={name:'P',description:'Description'}; system.components.item=['p']; system.categories.herbs=['p'];
   system.rules.prioritySpecial=true; system.rules.propertyOrder=['p'];
   const old={schemaVersion:2,systems:{a:system}}, f=storageFixture(old);
-  const snapshot=f.store.getSnapshot(); assert.equal(snapshot.schemaVersion,4); assert.deepEqual(snapshot.systems.a.specialComponents,{});
+  const snapshot=f.store.getSnapshot(); assert.equal(snapshot.schemaVersion,5); assert.deepEqual(snapshot.systems.a.specialComponents,{});
   assert.deepEqual(snapshot.systems.a.components,system.components); assert.deepEqual(snapshot.systems.a.rules,system.rules);
   assert.deepEqual(f.persisted,old); assert.equal(f.writes,0);
   f.rejectSave=true; await assert.rejects(f.store.updateProperty('a','p',{name:'Renamed'})); assert.deepEqual(f.persisted,old);
   f.rejectSave=false; await f.store.updateProperty('a','p',{name:'Renamed'});
-  assert.equal(f.persisted.schemaVersion,4); assert.deepEqual(f.persisted.systems.a.components.item,['p']); assert.deepEqual(f.persisted.systems.a.specialComponents,{});
+  assert.equal(f.persisted.schemaVersion,5); assert.deepEqual(f.persisted.systems.a.components.item,['p']); assert.deepEqual(f.persisted.systems.a.specialComponents,{});
 });
 
 test('strict schema 2/3 recognition never drops unknown fields, malformed special links or conflicting types', async () => {
@@ -411,7 +412,7 @@ test('strict schema 2/3 recognition never drops unknown fields, malformed specia
     s=>s.specialComponents=JSON.parse('{"__proto__":[]}'),s=>s.properties.p.special=true]) {
     const value=structuredClone(base); mutate(value.systems.a); cases.push(value);
   }
-  const old=structuredClone(base); old.schemaVersion=2; delete old.systems.a.specialComponents;
+  const old=structuredClone(base); old.schemaVersion=2; delete old.systems.a.specialComponents; delete old.systems.a.recipeRules;
   cases.push({...old,extra:true}, {...old,systems:{a:{...old.systems.a,specialComponents:{}}}});
   for(const initial of cases) {
     const f=storageFixture(initial); assert.throws(()=>f.store.getSnapshot()); await assert.rejects(f.store.ensureSystem('b'));

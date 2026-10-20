@@ -1,4 +1,5 @@
 import { mountPropertyPanel } from "./property-panel.js";
+import { persistedRecipes } from './recipe-contract.js';
 
 const MANAGER_ID = "fabricate-crafting-system-manager";
 let surfaceId = 0;
@@ -120,7 +121,7 @@ function mountVocabulary({ surface, systemId, data, text, canWrite }) {
 }
 
 export function installManagerAdapter({ hooks, getGame, data, compatible,
-  notifications, openAssignments, Observer = globalThis.MutationObserver }) {
+  notifications, openAssignments, openRecipeRules, Observer = globalThis.MutationObserver }) {
   const sessions = new Map(), warned = new WeakSet();
   const text = key => getGame().i18n.localize(`SKYBRICATE.Editor.${key}`);
   const allowed = () => getGame().user?.isGM === true && compatible();
@@ -138,7 +139,8 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
     if (!root?.querySelectorAll || !root.ownerDocument || typeof Observer !== "function"
       || typeof store?.selectedSystemId?.subscribe !== "function"
       || typeof store?.viewState?.subscribe !== "function") { warn(app); return; }
-    let selectedId, state, mounted = null, assignmentAction = null, disposed = false, queued = false, connectionObserver = null;
+    let selectedId, state, mounted = null, assignmentAction = null, disposed = false, queued = false, connectionObserver = null, recipeEpoch = 0;
+    const recipeActions = new Map();
     const unsubscribers = [];
     function unmount() { mounted?.panel.dispose(); mounted = null; }
     // Stock 1.9.10 header action container. No routes, drafts or stores are changed.
@@ -147,6 +149,48 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
       return hosts.length === 1 && hosts[0].tagName === 'DIV' ? hosts[0] : null;
     }
     function disposeAssignmentAction() { assignmentAction?.dispose(); assignmentAction = null; }
+    function recipeAvailable(id, epoch) {
+      return allowed() && !disposed && root.isConnected && app.element === root && app._adminStore === store
+        && selectedId === id && state?.selectedSystem?.id === id && recipeEpoch === epoch;
+    }
+    function reconcileRecipeActions() {
+      const wanted = new Map();
+      if (typeof openRecipeRules === 'function' && recipeAvailable(selectedId, recipeEpoch)) {
+        const rows = root.querySelectorAll('.manager-recipe-row[data-recipe-id]');
+        if (rows.length) {
+          const recipes = persistedRecipes(getGame()), seen = new Set();
+          for (const row of rows) {
+            const id = row.dataset.recipeId, edits = row.querySelectorAll('button.manager-recipe-edit[data-recipe-edit]');
+            if (row.tagName !== 'LI' || seen.has(id) || edits.length !== 1 || edits[0].dataset.recipeEdit !== id
+              || recipes.get(id)?.craftingSystemId !== selectedId) throw new Error('Unsupported native recipe row');
+            seen.add(id); wanted.set(row, { id, edit: edits[0], systemId: selectedId, epoch: recipeEpoch });
+          }
+        }
+      }
+      for (const [row, action] of recipeActions) {
+        const next = wanted.get(row);
+        if (!next || next.id !== action.id || next.systemId !== action.systemId || next.epoch !== action.epoch
+          || next.edit !== action.edit || !row.contains(action.button)) { action.dispose(); recipeActions.delete(row); }
+      }
+      for (const [row, next] of wanted) {
+        if (recipeActions.has(row)) continue;
+        const button = root.ownerDocument.createElement('button'); button.type = 'button';
+        button.className = 'manager-icon-button'; button.dataset.skybricateRecipe = next.id;
+        button.title = button.ariaLabel = getGame().i18n.localize('SKYBRICATE.Recipe.Title');
+        const icon = root.ownerDocument.createElement('i'); icon.className = 'fas fa-sliders'; icon.setAttribute('aria-hidden', 'true'); button.append(icon);
+        const available = () => recipeAvailable(next.systemId, next.epoch);
+        const click = async event => {
+          event.preventDefault(); event.stopPropagation();
+          if (!available() || !row.isConnected || row.dataset.recipeId !== next.id || !row.contains(button)) return;
+          try {
+            if (persistedRecipes(getGame()).get(next.id)?.craftingSystemId !== next.systemId) return;
+            await openRecipeRules(next.systemId, next.id, available);
+          } catch { notifications()?.warn(text('Contract')); }
+        };
+        button.addEventListener('click', click); next.edit.after(button);
+        recipeActions.set(row, { ...next, button, dispose() { button.removeEventListener('click', click); button.remove(); } });
+      }
+    }
     function reconcileAssignmentAction() {
       const host = allowed() && !disposed && root.isConnected && app.element === root
         && app._adminStore === store && typeof openAssignments === 'function' ? assignmentHost() : null;
@@ -183,6 +227,7 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
       try {
         if (root.isConnected && connectionObserver) { connectionObserver.disconnect(); connectionObserver = null; }
         reconcileAssignmentAction();
+        reconcileRecipeActions();
         const next = context();
         if (mounted && (!next || mounted.id !== next.id || mounted.target !== next.target
           || !mounted.panel.element.isConnected || !mounted.panel.sync(next.surface))) unmount();
@@ -198,7 +243,7 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
             } });
           mounted = { ...next, panel };
         }
-      } catch { unmount(); warn(app); }
+      } catch { unmount(); for (const action of recipeActions.values()) action.dispose(); recipeActions.clear(); warn(app); }
     }
     function schedule() {
       if (disposed || queued) return;
@@ -213,6 +258,7 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
       disposed = true; observer.disconnect(); connectionObserver?.disconnect(); connectionObserver = null;
       for (const unsubscribe of unsubscribers) unsubscribe();
       disposeAssignmentAction();
+      for (const action of recipeActions.values()) action.dispose(); recipeActions.clear();
       unmount();
     } };
     sessions.set(app, session);
@@ -223,7 +269,7 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
         connectionObserver.observe(root.ownerDocument, { childList: true, subtree: true });
       }
       for (const [source, receive] of [
-        [store.selectedSystemId, value => { selectedId = value; }],
+        [store.selectedSystemId, value => { if (value !== selectedId) recipeEpoch++; selectedId = value; }],
         [store.viewState, value => { state = value; }]
       ]) {
         const unsubscribe = source.subscribe(value => { receive(value); changed(); });
@@ -236,8 +282,21 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
   const userHook = hooks.on("updateUser", () => {
     for (const [app, session] of sessions) { if (!allowed()) close(app); else session.schedule(); }
   });
+  const settingHook = hooks.on('updateSetting', setting => {
+    if (!['fabricate.recipes', 'fabricate.craftingSystems'].includes(setting.key) || !allowed()) return;
+    for (const session of sessions.values()) session.schedule();
+    // Strict corpus read must succeed before cleanup. A failed native write never
+    // fires a setting update. Queue rechecks the persisted corpus before deleting.
+    try {
+      const recipes = persistedRecipes(getGame()), snapshot = data.getSnapshot();
+      const stale = Object.entries(snapshot.systems).some(([systemId, system]) =>
+        Object.keys(system.recipeRules).some(id => recipes.get(id)?.craftingSystemId !== systemId));
+      if (stale) void data.reconcileRecipeRules({ canWrite: allowed }).catch(() => notifications()?.warn(text('Contract')));
+    } catch { notifications()?.warn(text('Contract')); }
+  });
   return () => {
     for (const app of sessions.keys()) close(app);
     hooks.off("renderApplicationV2", renderHook); hooks.off("closeApplicationV2", closeHook); hooks.off("updateUser", userHook);
+    hooks.off('updateSetting', settingHook);
   };
 }

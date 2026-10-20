@@ -1,5 +1,6 @@
-import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, readData, validateData, validateLegacyData, pruneKnowledge } from "./data-model.js";
+import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty, readData, validateData, validateLegacyData, pruneKnowledge, validateRecipeRules } from "./data-model.js";
 import { persistedComponents, persistedSystems } from './assignment-contract.js';
+import { persistedRecipes, recipeContext, validateOutcomeLimits } from './recipe-contract.js';
 
 export const SETTING_NAMESPACE = "skybricate";
 export const SETTING_KEY = "data";
@@ -136,6 +137,10 @@ export class DataStore {
         for (const key of Object.keys(assignments)) assignments[key] = assignments[key].filter(value => value !== id);
       }
       system.rules.propertyOrder = system.rules.propertyOrder.filter(value => value !== id);
+      for (const rules of Object.values(system.recipeRules)) {
+        rules.allowedPropertyIds = rules.allowedPropertyIds.filter(value => value !== id);
+        rules.propertyOrder = rules.propertyOrder.filter(value => value !== id);
+      }
     });
   }
 
@@ -265,6 +270,34 @@ export class DataStore {
       const rules = this.#system(data, systemId).rules;
       assertFields(values, Object.keys(rules));
       Object.assign(rules, values);
+    });
+  }
+
+  configureRecipeRules(systemId, recipeId, input, { canWrite = () => true, expectedRules, expectedContext } = {}) {
+    const values = copy(input), expected = copy(expectedRules);
+    return this.#write(data => {
+      if (!canWrite()) throw new Error('Recipe context is no longer available');
+      const context = recipeContext(this.#getGame(), systemId, recipeId);
+      if (expectedContext !== undefined && context.revision !== expectedContext) throw new Error('Recipe changed; reload its rules');
+      const system = this.#system(data, systemId);
+      if (expectedRules !== undefined && JSON.stringify(system.recipeRules[recipeId] ?? null) !== JSON.stringify(expected)) {
+        throw new Error('Recipe rules changed; reload before saving');
+      }
+      validateRecipeRules(system, values);
+      validateOutcomeLimits(values, context.outcomes);
+      system.recipeRules[recipeId] = values;
+    });
+  }
+
+  reconcileRecipeRules({ canWrite = () => true } = {}) {
+    return this.#write(data => {
+      if (!canWrite()) throw new Error('Recipe context is no longer available');
+      const recipes = persistedRecipes(this.#getGame());
+      for (const [systemId, system] of Object.entries(data.systems)) {
+        for (const id of Object.keys(system.recipeRules)) {
+          if (recipes.get(id)?.craftingSystemId !== systemId) delete system.recipeRules[id];
+        }
+      }
     });
   }
 

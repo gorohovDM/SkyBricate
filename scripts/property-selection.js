@@ -31,7 +31,7 @@ export function selectProperties(input) {
   }
   if (!Array.isArray(componentIds)) throw new Error('Component IDs must be an array');
   for (const id of componentIds) assertKey(id);
-  assertFields(recipeRules, ['limitByCheck', 'outcomeLimits', 'prioritySpecial', 'propertyOrder']);
+  assertFields(recipeRules, ['limitByCheck', 'outcomeLimits', 'prioritySpecial', 'propertyOrder', 'allowedPropertyIds']);
   const { limitByCheck = false, outcomeLimits = {}, prioritySpecial = false, propertyOrder = [] } = recipeRules;
   if (typeof limitByCheck !== 'boolean' || typeof prioritySpecial !== 'boolean') throw new Error('Rule toggles must be boolean');
   record(outcomeLimits);
@@ -39,6 +39,8 @@ export function selectProperties(input) {
     if (!Number.isSafeInteger(count) || count < 0) throw new Error('Limit must be a non-negative safe integer');
   }
   references(system, propertyOrder);
+  const allowed = Object.hasOwn(recipeRules, 'allowedPropertyIds') ? new Set(recipeRules.allowedPropertyIds) : null;
+  if (allowed) references(system, recipeRules.allowedPropertyIds);
   let maximum = Infinity;
   if (limitByCheck) {
     assertKey(outcome);
@@ -58,6 +60,7 @@ export function selectProperties(input) {
   }
   const special = [], matched = [];
   for (const [propertyId, origins] of sources) {
+    if (allowed && !allowed.has(propertyId)) continue;
     const specialSources = origins.filter(source => source.assignmentType === 'special');
     if (prioritySpecial && specialSources.length) {
       special.push({ propertyId, selectionType: 'special', sources: specialSources });
