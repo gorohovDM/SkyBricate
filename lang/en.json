@@ -74,6 +74,22 @@
       "Unknown": "Unknown",
       "RevealKnowledge": "Reveal",
       "HideKnowledge": "Hide"
+    },
+    "Player": {
+      "Title": "Component properties",
+      "Hint": "Properties known to the character selected in Fabricate. Unknown assignments are shown as slots.",
+      "System": "Crafting system",
+      "Search": "Search components and known properties",
+      "Refresh": "Refresh",
+      "Unknown": "Unknown property",
+      "Ordinary": "Ordinary properties",
+      "Special": "Special properties",
+      "NoProperties": "No visible property assignments.",
+      "NoMatches": "No matches.",
+      "NoActor": "Select an available character in Fabricate.",
+      "NoSystems": "No saved crafting systems.",
+      "NoComponents": "No saved components.",
+      "Unavailable": "Properties are unavailable. Check saved data and compatibility."
     }
   }
 }

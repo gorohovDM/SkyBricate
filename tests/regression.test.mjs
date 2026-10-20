@@ -10,6 +10,7 @@ import { emptyData, emptySystem } from "../scripts/data-model.js";
 import "./editor-regressions.mjs";
 import "./assignment-regressions.mjs";
 import "./knowledge-regressions.mjs";
+import "./player-regressions.mjs";
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function fixture({ getApplicationV2 } = {}) {
@@ -22,11 +23,12 @@ function fixture({ getApplicationV2 } = {}) {
   const game = { modules: new Map([["fabricate", { active: true, version: "1.9.10" }]]),
     release: { generation: 13 }, user: { isGM: true }, i18n: { localize: key => key },
     fabricate: { whenReady: () => ready, getCraftingSystemManager() {}, getRecipeManager() {}, getCraftingRunManager() {},
-      api: { playerExtensions: { registerPlayerNavProvider() { throw Error("Scaffold must not register UI"); } } } } };
-  const warnings = [], infos = [];
+      api: { playerExtensions: { registerPlayerNavProvider() { return () => {}; } } } } };
+  const warnings = [], infos = [], providers = [];
+  game.fabricate.api.playerExtensions.registerPlayerNavProvider = provider => { providers.push(provider); return () => {}; };
   const status = installLifecycle({ hooks, getGame: () => game,
     notifications: () => ({ warn: text => warnings.push(text) }), logger: { warn() {}, info: text => infos.push(text) }, getApplicationV2 });
-  return { game, hooks, finish, status, warnings, infos };
+  return { game, hooks, finish, status, warnings, infos, providers };
 }
 
 for (const order of ["before", "after", "already-settled"]) test(`readiness: Fabricate ${order} Foundry ready`, async () => {
@@ -37,6 +39,17 @@ for (const order of ["before", "after", "already-settled"]) test(`readiness: Fab
   await flush();
   f.hooks.fire("fabricate.ready"); f.hooks.fire("ready"); await flush();
   assert.equal(f.status.ready, true); assert.equal(f.infos.length, 1); assert.equal(f.warnings.length, 0);
+});
+
+test('player provider registers once for GM and player, only after Fabricate readiness', async () => {
+  for (const isGM of [true, false]) {
+    const f = fixture(); f.game.user.isGM = isGM;
+    f.hooks.fire('ready'); await flush(); assert.equal(f.providers.length, 0);
+    f.finish(); await flush();
+    f.hooks.fire('fabricate.ready'); f.hooks.fire('ready'); await flush();
+    assert.equal(f.providers.length, 1); assert.equal(f.providers[0].id, 'skybricate');
+    assert.equal(f.providers[0].apiVersion, 1); assert.equal(typeof f.providers[0].mount, 'function');
+  }
 });
 
 for (const [reason, mutate] of [
@@ -96,7 +109,7 @@ test("release ZIP is reproducible, exact allowlist and manifest paths exist", as
   const out = await mkdtemp(resolve(tmpdir(), "skybricate-build-")); t.after(() => rm(out, { recursive: true, force: true }));
   const first = await build({ out }); const second = await build({ out }); assert.deepEqual(first.archive, second.archive);
   const entries = unzipStored(await readFile(resolve(out, "skybricate.zip")));
-  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
+  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "scripts/player-panel.js", "scripts/player-provider.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
   for (const [path, data] of entries) assert.deepEqual(data, await readFile(resolve(ROOT, path)));
   const manifest = JSON.parse(entries.get("module.json"));
   assert.deepEqual(await readFile(resolve(out, "module.json")), entries.get("module.json"));
@@ -109,6 +122,8 @@ test("release ZIP is reproducible, exact allowlist and manifest paths exist", as
   assert.deepEqual(Object.keys(en), Object.keys(ru));
   assert.deepEqual(Object.keys(JSON.parse(entries.get("lang/en.json")).SKYBRICATE.Editor),
     Object.keys(JSON.parse(entries.get("lang/ru.json")).SKYBRICATE.Editor));
+  assert.deepEqual(Object.keys(JSON.parse(entries.get("lang/en.json")).SKYBRICATE.Player),
+    Object.keys(JSON.parse(entries.get("lang/ru.json")).SKYBRICATE.Player));
 });
 
 test("build rejects missing runtime files, excluded paths and version drift", async t => {
