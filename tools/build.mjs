@@ -3,7 +3,7 @@ import { resolve, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = fileURLToPath(new URL("../", import.meta.url));
-export const RUNTIME_FILES = Object.freeze(["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
+export const RUNTIME_FILES = Object.freeze(["module.json", "scripts/main.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "scripts/player-panel.js", "scripts/player-provider.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
 
 function crc32(data) {
   let crc = 0xffffffff;

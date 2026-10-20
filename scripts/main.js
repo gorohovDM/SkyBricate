@@ -2,11 +2,12 @@ import { DataStore, registerDataSetting } from "./data-store.js";
 import { installManagerAdapter } from "./manager-adapter.js";
 import { createAssignmentApplication, registerAssignmentMenu } from './assignment-adapter.js';
 import { createKnowledgeApplication, registerKnowledgeMenu } from './knowledge-adapter.js';
+import { installPlayerProvider } from './player-provider.js';
 
 export const MODULE_ID = "skybricate";
 export const FABRICATE_VERSION = "1.9.10";
 
-// Gameplay providers and crafting adapters belong to later stages.
+// Crafting adapters belong to later stages.
 export function checkCompatibility(game) {
   const dependency = game.modules?.get("fabricate");
   if (!dependency?.active) return "dependency";
@@ -46,6 +47,7 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
       if (problem) return fail(problem);
       const module = getGame().modules.get(MODULE_ID);
       data = new DataStore({ getGame });
+      installPlayerProvider({ getGame, data, hooks, compatible: () => checkCompatibility(getGame()) === null });
       const openAssignments = () => {
         if (!AssignmentApplication || !getGame().user?.isGM || checkCompatibility(getGame()) !== null) {
           throw new Error('SkyBricate assignments are unavailable');
@@ -64,7 +66,7 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
         compatible: () => checkCompatibility(getGame()) === null });
       terminal = true;
       status.ready = true;
-      logger.info("SkyBricate | Property editor ready; gameplay features are not implemented.");
+      logger.info("SkyBricate | Property editors and player knowledge view ready.");
     }).catch(() => fail("initialization"));
   };
   hooks.once("init", () => {

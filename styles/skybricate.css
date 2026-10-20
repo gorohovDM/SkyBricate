@@ -35,3 +35,9 @@
 .skybricate-zone-heading button, .skybricate-assignment-row button { width: auto; flex: 0 0 auto; }
 .skybricate-assignment-row { margin-bottom: 6px; }
 .skybricate-assignment-row select { flex: 1; }
+.skybricate-player-panel { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.skybricate-player-panel label { display: flex; flex-direction: column; gap: 4px; }
+.skybricate-player-panel p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.skybricate-player-panel article { border-bottom: 1px solid var(--fab-border, #888); padding: 8px 0; }
+.skybricate-player-panel li { margin-bottom: 6px; overflow-wrap: anywhere; }
+.skybricate-player-panel [role="status"]:empty { display: none; }

@@ -7,6 +7,11 @@ export const SPECIAL_SETTING_KEY = "showSpecialProperties";
 export const specialPropertiesEnabled = game => game.settings.get(SETTING_NAMESPACE, SPECIAL_SETTING_KEY) === true;
 const specialSettingListeners = new Set();
 let specialSettingRevision = 0;
+const dataListeners = new Set();
+export function subscribeData(listener) {
+  dataListeners.add(listener);
+  return () => dataListeners.delete(listener);
+}
 export function subscribeSpecialSetting(listener) {
   specialSettingListeners.add(listener);
   return () => specialSettingListeners.delete(listener);
@@ -19,7 +24,8 @@ export function registerDataSetting(settings) {
     onChange: () => { specialSettingRevision++; for (const listener of specialSettingListeners) listener(); }
   });
   settings.register(SETTING_NAMESPACE, SETTING_KEY, {
-    scope: "world", config: false, type: Object, default: emptyData()
+    scope: "world", config: false, type: Object, default: emptyData(),
+    onChange: () => { for (const listener of dataListeners) listener(); }
   });
 }
 
