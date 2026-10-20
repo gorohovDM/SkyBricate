@@ -90,6 +90,32 @@
       "NoSystems": "No saved crafting systems.",
       "NoComponents": "No saved components.",
       "Unavailable": "Properties are unavailable. Check saved data and compatibility."
+    },
+    "Recipe": {
+      "Title": "SkyBricate recipe rules",
+      "Hint": "These rules belong to the saved recipe shown below. Save them separately; unsaved Fabricate recipe edits are not included. Closing discards unsaved rule edits.",
+      "AllowedProperties": "Allowed properties and order",
+      "AllowedProperty": "Allowed property",
+      "Empty": "The saved empty list allows no properties. Add properties from this system catalog.",
+      "Configured": "Only the selected properties may be chosen from component candidates.",
+      "Unconfigured": "No recipe rules saved yet: legacy selection remains active. Saving creates an explicit allowed list, including an empty list.",
+      "PrioritySpecial": "Prioritize special assignments",
+      "LimitByCheck": "Limit property count by check outcome",
+      "OutcomeHint": "One shared maximum of distinct properties per native outcome; 0 allows none.",
+      "NoOutcomes": "No stable check outcomes are available: check disabled, missing/legacy formula, no-check mode or progressive. Turn off the count limit.",
+      "Success": "Success",
+      "Failure": "Failure",
+      "Add": "Add property",
+      "Up": "Up",
+      "Down": "Down",
+      "Remove": "Remove",
+      "Save": "Save recipe rules",
+      "Reload": "Reload saved rules",
+      "Error": "Could not save:",
+      "Saving": "Saving…",
+      "Saved": "Recipe rules saved.",
+      "InvalidLimit": "Enter a non-negative safe integer for every outcome.",
+      "Unavailable": "This window lost its manager context or GM access. Reopen rules from the recipe row."
     }
   }
 }

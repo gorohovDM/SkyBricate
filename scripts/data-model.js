@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 export const copy = value => structuredClone(value);
 
@@ -31,9 +31,24 @@ export function emptyData() {
 }
 
 export function emptySystem() {
-  return { properties: {}, categories: {}, components: {}, specialComponents: {}, rules: {
+  return { properties: {}, categories: {}, components: {}, specialComponents: {}, recipeRules: {}, rules: {
     limitByCheck: false, successLimit: 0, outcomeLimits: {}, prioritySpecial: false, propertyOrder: []
   } };
+}
+
+export function emptyRecipeRules() {
+  return { allowedPropertyIds: [], propertyOrder: [], limitByCheck: false, outcomeLimits: {}, prioritySpecial: false };
+}
+
+export function validateRecipeRules(system, rules) {
+  exactFields(rules, Object.keys(emptyRecipeRules()));
+  references(system, rules.allowedPropertyIds);
+  references(system, rules.propertyOrder);
+  if (rules.propertyOrder.some(id => !rules.allowedPropertyIds.includes(id))) throw new Error('Order requires an allowed property');
+  if (typeof rules.limitByCheck !== 'boolean' || typeof rules.prioritySpecial !== 'boolean') throw new Error('Rule toggles must be boolean');
+  record(rules.outcomeLimits);
+  for (const value of Object.values(rules.outcomeLimits)) limit(value);
+  return rules;
 }
 
 export function requireProperty(system, id) {
@@ -69,13 +84,13 @@ function properties(values) {
 }
 function validateShape(data, version) {
   const legacy = version === 1;
-  exactFields(data, legacy ? ["schemaVersion", "properties", "systems"] : version === 4 ? ["schemaVersion", "systems", "knowledge"] : ["schemaVersion", "systems"]);
+  exactFields(data, legacy ? ["schemaVersion", "properties", "systems"] : version >= 4 ? ["schemaVersion", "systems", "knowledge"] : ["schemaVersion", "systems"]);
   if (data.schemaVersion !== version) throw new Error("Unsupported SkyBricate schema version");
   if (legacy) properties(data.properties);
   record(data.systems);
   for (const system of Object.values(data.systems)) {
     exactFields(system, legacy ? ["categories", "components", "rules"] : version === 2
-      ? ["properties", "categories", "components", "rules"] : ["properties", "categories", "components", "specialComponents", "rules"]);
+      ? ["properties", "categories", "components", "rules"] : ["properties", "categories", "components", "specialComponents", "rules", ...(version >= 5 ? ['recipeRules'] : [])]);
     if (!legacy) properties(system.properties);
     const catalog = legacy ? data : system;
     for (const assignments of [system.categories, system.components, ...(version >= 3 ? [system.specialComponents] : [])]) {
@@ -92,8 +107,12 @@ function validateShape(data, version) {
     record(rules.outcomeLimits);
     for (const value of Object.values(rules.outcomeLimits)) limit(value);
     references(catalog, rules.propertyOrder);
+    if (version >= 5) {
+      record(system.recipeRules);
+      for (const recipeRules of Object.values(system.recipeRules)) validateRecipeRules(system, recipeRules);
+    }
   }
-  if (version === 4) {
+  if (version >= 4) {
     record(data.knowledge);
     for (const systems of Object.values(data.knowledge)) {
       record(systems);
@@ -114,12 +133,13 @@ function validateShape(data, version) {
 
 // Old valid schemas are read losslessly; migration persists only on a successful write.
 export function readData(stored) {
-  if (![2, 3].includes(stored?.schemaVersion)) return copy(validateData(stored));
+  if (![2, 3, 4].includes(stored?.schemaVersion)) return copy(validateData(stored));
   validateShape(stored, stored.schemaVersion);
   const data = copy(stored);
   data.schemaVersion = SCHEMA_VERSION;
   if (stored.schemaVersion === 2) for (const system of Object.values(data.systems)) system.specialComponents = {};
-  data.knowledge = {};
+  if (stored.schemaVersion < 4) data.knowledge = {};
+  for (const system of Object.values(data.systems)) system.recipeRules = {};
   return validateData(data);
 }
 

@@ -3,6 +3,7 @@ import { installManagerAdapter } from "./manager-adapter.js";
 import { createAssignmentApplication, registerAssignmentMenu } from './assignment-adapter.js';
 import { createKnowledgeApplication, registerKnowledgeMenu } from './knowledge-adapter.js';
 import { installPlayerProvider } from './player-provider.js';
+import { createRecipeApplication } from './recipe-adapter.js';
 
 import { selectProperties } from './property-selection.js';
 
@@ -30,7 +31,7 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
   let waiting = false;
   let terminal = false;
   const status = { ready: false, reason: null };
-  let data = null, AssignmentApplication = null, KnowledgeApplication = null;
+  let data = null, AssignmentApplication = null, KnowledgeApplication = null, RecipeApplication = null;
   const fail = (reason) => {
     terminal = true;
     status.reason = reason;
@@ -62,9 +63,13 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
         }
         return new KnowledgeApplication().render({ force: true });
       };
-      if (module) module.api = Object.freeze({ data, openAssignments, openKnowledge, selectProperties });
+      const openRecipeRules = (systemId, recipeId, contextAvailable = () => true) => {
+        if (!RecipeApplication || !getGame().user?.isGM || checkCompatibility(getGame()) !== null) throw new Error('Recipe rules are unavailable');
+        return new RecipeApplication({ systemId, recipeId, contextAvailable }).render({ force: true });
+      };
+      if (module) module.api = Object.freeze({ data, openAssignments, openKnowledge, openRecipeRules, selectProperties });
       if (getGame().user?.isGM) installManagerAdapter({ hooks, getGame, data, notifications,
-        openAssignments,
+        openAssignments, openRecipeRules,
         compatible: () => checkCompatibility(getGame()) === null });
       terminal = true;
       status.ready = true;
@@ -81,6 +86,8 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
       KnowledgeApplication = createKnowledgeApplication({ ApplicationV2, getGame, getData: () => data,
         compatible: () => checkCompatibility(getGame()) === null });
       registerKnowledgeMenu(getGame().settings, KnowledgeApplication);
+      RecipeApplication = createRecipeApplication({ ApplicationV2, getGame, getData: () => data,
+        compatible: () => checkCompatibility(getGame()) === null });
     }
   });
   hooks.once("ready", () => { foundryReady = true; attempt(); });
