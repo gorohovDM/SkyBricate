@@ -156,6 +156,29 @@ try {
   // Candidate metadata never leaks into stock result/run/chat payloads.
   assert(!JSON.stringify(f.actor, (key, value) => key === 'parent' ? undefined : value).includes('Secret property'));
 
+  // User-reported assignment setup: ordinary and special properties both work
+  // with implicit defaults and explicit saved recipe rules. Native essence
+  // amounts do not override the selected SkyBricate property strength.
+  for (const special of [false, true]) for (const savedRules of [false, true]) {
+    f = fixture(); rolls = 0;
+    if (special) {
+      f.sky.systems.s.components.a = [];
+      f.sky.systems.s.specialComponents.a = ['p'];
+    }
+    if (savedRules) f.sky.systems.s.recipeRules.recipe = { ...emptyRecipeRules(), allowedPropertyIds: ['p'], prioritySpecial: special };
+    f.system.components[0].essences = { e: 45 };
+    crafted = await f.craft();
+    assert.equal(crafted.success, true, JSON.stringify({ special, savedRules, message: crafted.message, warnings: f.warnings }));
+    assert.equal(rolls, 1); assert.equal(f.counters.consumes, 1);
+    assert.equal(crafted.results[0].system.power, 1);
+    const applied = crafted.results[0].flags.skybricate.application.applied[0];
+    assert.equal(applied.propertyId, 'p'); assert.equal(applied.essenceId, 'e');
+    assert.deepEqual(applied.sources.map(row => [row.componentId, row.assignmentType]), special
+      ? savedRules ? [['a', 'special']] : [['a', 'special'], ['b', 'ordinary']]
+      : [['a', 'ordinary'], ['b', 'ordinary']]);
+    assert.equal(f.warnings.length, 0);
+  }
+
   f = fixture({ groups: ['a', 'a'], quantities: [2] }); rolls = 0;
   assert.equal((await f.craft()).success, true); assert.deepEqual(f.captures[0].selected, []);
   assert.equal(f.counters.deletes, 1); assert.equal(rolls, 1);

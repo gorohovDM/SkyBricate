@@ -33,7 +33,7 @@ export const settleDOM = async () => {
   await Promise.all([...windows].map(window => window.happyDOM.waitUntilComplete()));
   await Promise.resolve();
 };
-export function managerFixture(data, { isGM = true, mode = "alchemy", id = "a", openAssignments } = {}) {
+export function managerFixture(data, { isGM = true, mode = "alchemy", id = "a", openAssignments, openKnowledge } = {}) {
   const window = new Window(); windows.add(window);
   const root = window.document.createElement("div"); root.className = "fabricate-manager"; window.document.body.append(root);
   root.innerHTML = vocabularyMarkup();
@@ -47,7 +47,7 @@ export function managerFixture(data, { isGM = true, mode = "alchemy", id = "a", 
     disconnect() { super.disconnect(); observerCount--; }
   }
   const dispose = installManagerAdapter({ hooks, getGame: () => game, data, compatible: () => compatible,
-    openAssignments,
+    openAssignments, openKnowledge,
     notifications: () => ({ warn: message => warnings.push(message) }), Observer });
   return { window, root, app, hooks, game, selectedSystemId, viewState, warnings, dispose,
     set compatible(value) { compatible = value; },

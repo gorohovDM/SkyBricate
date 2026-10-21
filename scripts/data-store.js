@@ -51,6 +51,7 @@ export class DataStore {
   }
 
   getEssences(systemId) { return systemEssences(this.#getGame(), systemId); }
+  getComponentIds(systemId) { return persistedComponents(this.#getGame(), systemId); }
 
   #enqueue(operation) {
     const queued = this.#tail.then(() => {

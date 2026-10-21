@@ -12,8 +12,8 @@ import { stockSources } from './fabricate-source.mjs';
 const { upstream, read: readStock } = stockSources(process.argv[2]);
 const cacheRoot = resolve("node_modules/.cache"); await mkdir(cacheRoot, { recursive: true });
 const temp = await mkdtemp(resolve(cacheRoot, "skybricate-contract-"));
-let assignmentOpens = 0;
-const f = managerFixture({ getSnapshot: emptyData }, { openAssignments: () => { assignmentOpens++; } });
+let assignmentOpens = 0, knowledgeOpens = 0;
+const f = managerFixture({ getSnapshot: emptyData }, { openAssignments: () => { assignmentOpens++; }, openKnowledge: () => { knowledgeOpens++; } });
 const copied = new Set();
 async function prepare(path) {
   if (copied.has(path)) return;
@@ -71,6 +71,9 @@ try {
   await settle(); f.render(); await settle();
   const assignments = () => f.root.querySelector('[data-skybricate-assignments]');
   assert(assignments()); assignments().click(); await settle(); assert.equal(assignmentOpens, 1);
+  const knowledge = () => f.root.querySelector('[data-skybricate-knowledge]');
+  assert(knowledge()); knowledge().click(); await settle(); assert.equal(knowledgeOpens, 1);
+  assert.equal(ownTab().querySelector('.manager-editor-tab-badge').textContent, '0');
   assert(ownTab()); assert.equal(f.panel(), null); assert.equal(f.root.querySelectorAll('[role="tab"]').length, 4);
   ownTab().click(); await settle(); assert.equal(f.panel()?.dataset.skybricatePanel, "a");
   assert.equal(nativeTab("recipe").getAttribute("aria-selected"), "false");
@@ -103,6 +106,7 @@ try {
   assert.equal(f.root.querySelector('[role="tabpanel"]').hidden, false);
   assert.equal(f.observerCount, 0); assert.equal(f.warnings.length, 0);
   assert.equal(assignments(), null);
+  assert.equal(knowledge(), null);
   await unmount(component);
   console.log("Fabricate 1.9.10 actual TagsCategoriesView + VocabularyPanel: native tabs/forms, 4-tab keyboard/ARIA, selection gap, navigation/rerender, restoration/close PASS.");
 } finally { f.destroy(); await rm(temp, { recursive: true, force: true }); }

@@ -6,6 +6,26 @@ export function mountPropertyPanel({ target, systemId, data, canWrite, text }) {
   panel.setAttribute("aria-label", text("Title"));
   let disposed = false, pending = false, editing = null, deleting = null, resetRequested = false;
   let name, description, essence, controls, message, refresh;
+  let catalogRevision;
+  function usageCounts(system) {
+    const counts = new Map();
+    // Only the complete persisted component corpus is authoritative, never drafts.
+    const present = data.getComponentIds?.(systemId);
+    if (!present) return null;
+    for (const id of present) {
+      const properties = new Set([...(system?.components[id] ?? []), ...(system?.specialComponents[id] ?? [])]);
+      for (const propertyId of properties) counts.set(propertyId, (counts.get(propertyId) ?? 0) + 1);
+    }
+    return counts;
+  }
+  function syncUsage(system) {
+    let counts;
+    try { counts = usageCounts(system); } catch { counts = null; }
+    for (const node of panel.querySelectorAll('[data-sky-usage]')) {
+      const value = counts ? `${text('LinkedComponents')}: ${counts.get(node.dataset.skyUsage) ?? 0}` : text('UsageUnavailable');
+      if (node.textContent !== value) node.textContent = value;
+    }
+  }
   const el = (tag, content, parent = panel, className = "") => {
     const node = document.createElement(tag);
     if (content !== undefined) node.textContent = content;
@@ -28,8 +48,10 @@ export function mountPropertyPanel({ target, systemId, data, canWrite, text }) {
     message.setAttribute("role", "status"); message.setAttribute("aria-live", "polite");
     controls = el("fieldset", undefined, panel, "skybricate-controls");
     try {
-      const properties = data.getSnapshot().systems[systemId]?.properties ?? {};
-      if (editing !== null && !properties[editing]) throw new Error(text("Missing"));
+      const system = data.getSnapshot().systems[systemId];
+      const properties = system?.properties ?? {};
+      catalogRevision = JSON.stringify(properties);
+      if (editing !== null && !properties[editing]) message.textContent = text('Missing');
       const property = editing === null ? null : properties[editing];
       const form = el("div", undefined, controls, "manager-vocabulary-form");
       const fields = el("div", undefined, form, "manager-vocabulary-form-fields");
@@ -50,6 +72,7 @@ export function mountPropertyPanel({ target, systemId, data, canWrite, text }) {
       essence.value = property?.essenceId ?? '';
       button(fields, editing === null ? "Add" : "Save", "save", "manager-button is-primary");
       if (editing !== null) button(fields, "Cancel", "cancel");
+      el('p', text('CraftPrerequisite'), form, 'manager-muted skybricate-craft-hint');
       const searchRow = el("div", undefined, controls, "manager-vocabulary-search-row");
       const searchLabel = el("label", undefined, searchRow, "manager-search manager-vocabulary-search");
       icon(searchLabel, "fas fa-search");
@@ -63,7 +86,7 @@ export function mountPropertyPanel({ target, systemId, data, canWrite, text }) {
         const row = el("div", undefined, card, "manager-vocabulary-row");
         const tile = el("span", undefined, row, "manager-vocabulary-icon is-decorative"); tile.setAttribute("aria-hidden", "true"); icon(tile, "fas fa-tag");
         const main = el("div", undefined, row, "manager-vocabulary-main"); el("strong", property.name, main); main.title = property.description;
-        el("span", text("UsageUnavailable"), row, "manager-chip");
+        const usage = el("span", '', row, "manager-chip"); usage.dataset.skyUsage = id;
         const edit = button(row, "Edit", "edit", "manager-icon-button", "fas fa-pen"); edit.setAttribute("aria-label", `${text("Edit")}: ${property.name}`);
         const remove = button(row, "Delete", "delete", "manager-icon-button is-danger", "fas fa-trash"); remove.setAttribute("aria-label", `${text("Delete")}: ${property.name}`);
         if (deleting === id) {
@@ -74,6 +97,7 @@ export function mountPropertyPanel({ target, systemId, data, canWrite, text }) {
           button(confirm, "Cancel", "cancel"); button(confirm, "ConfirmDelete", "confirm-delete", "manager-button is-danger");
         }
       }
+      syncUsage(system);
     } catch (error) {
       message.textContent = `${text("Error")} ${error.message}`; controls.disabled = true;
       if (data.hasLegacyData()) {
@@ -129,5 +153,27 @@ export function mountPropertyPanel({ target, systemId, data, canWrite, text }) {
     }
   }
   panel.addEventListener("click", onClick); render(); target.append(panel);
-  return { element: panel, dispose() { disposed = true; panel.removeEventListener("click", onClick); panel.remove(); } };
+  return { element: panel, sync() {
+    if (disposed || pending) return;
+    let system;
+    try { system = data.getSnapshot().systems[systemId]; } catch { return; }
+    if (JSON.stringify(system?.properties ?? {}) !== catalogRevision) {
+      // Live catalog/count updates must not discard an in-progress form.
+      const draft = name?.isConnected ? { name: name.value, description: description.value, essence: essence.value,
+        field: document.activeElement?.dataset.skyField, start: document.activeElement?.selectionStart,
+        end: document.activeElement?.selectionEnd } : null;
+      const status = message?.textContent ?? '';
+      render(status);
+      if (draft && name?.isConnected) {
+        name.value = draft.name; description.value = draft.description;
+        if (![...essence.options].some(option => option.value === draft.essence) && draft.essence) {
+          const option = el('option', `${text('MissingEssence')} (${draft.essence})`, essence); option.value = draft.essence;
+        }
+        essence.value = draft.essence;
+        const focused = panel.querySelector(`[data-sky-field="${draft.field}"]`);
+        focused?.focus();
+        if (typeof draft.start === 'number' && focused?.setSelectionRange) focused.setSelectionRange(draft.start, draft.end);
+      }
+    } else syncUsage(system);
+  }, dispose() { disposed = true; panel.removeEventListener("click", onClick); panel.remove(); } };
 }
