@@ -85,7 +85,10 @@ export function installResultApplication(scope, { system, sky, attempt, resolveU
     receiver._runEssencePropertyMacros = async function (itemData, context) {
       // Registered source Items can themselves be prior crafted outputs. Their
       // historical audit is never evidence about this new award.
-      if (itemData.flags?.skybricate) delete itemData.flags.skybricate.application;
+      if (itemData.flags?.skybricate) {
+        delete itemData.flags.skybricate.application;
+        delete itemData.flags.skybricate.discovery;
+      }
       baseline = leaves(copy(itemData.system));
       const applied = await nativeEssenceMacros.call(this, itemData, { ...context,
         system: { ...system, essenceDefinitions: ordered }, precomputedEssences: resolved, essenceEnabled: enabled });
@@ -166,7 +169,8 @@ export function installResultApplication(scope, { system, sky, attempt, resolveU
         sources: property.sources, outcomeId: context.outcomeId, strength: context.strength,
         macro: macroIds.has(property.essenceId), effects: effectIds.has(property.essenceId)
       }));
-      const audit = { version: 1, craftingSystemId: context.craftingSystemId, recipeId: context.recipeId,
+      const audit = { version: 1, discoveryVersion: 1, itemUuid: item.uuid,
+        craftingSystemId: context.craftingSystemId, recipeId: context.recipeId,
         resultId: result.id ?? null, actorUuid: actor.uuid, checkSuccess: context.checkResult.success === true,
         craftSuccess: nativeResult.success === true,
         outcomeId: context.outcomeId, strength: context.strength, applied };

@@ -2,6 +2,7 @@ import { assertKey, assertFields, copy, emptyData, emptySystem, requireProperty,
 import { persistedComponents, persistedSystems } from './assignment-contract.js';
 import { persistedRecipes, recipeContext, validateOutcomeLimits } from './recipe-contract.js';
 import { systemEssences } from './craft-adapter.js';
+import { discoveryContext, discoverySources, isActiveGM } from './craft-discovery.js';
 
 export const SETTING_NAMESPACE = "skybricate";
 export const SETTING_KEY = "data";
@@ -89,6 +90,37 @@ export class DataStore {
       const ids = components[componentId] ??= [];
       if (known && !ids.includes(propertyId)) ids.push(propertyId);
       if (!known) components[componentId] = ids.filter(id => id !== propertyId);
+    });
+  }
+
+  discoverCraftKnowledge(item) {
+    return this.#enqueue(async game => {
+      if (!isActiveGM(game) || item?.flags?.skybricate?.discovery) return;
+      const context = discoveryContext(game, item);
+      if (!context) return;
+      const { actorId, audit } = context;
+      const data = this.getSnapshot();
+      const sources = discoverySources(audit, data.systems[audit.craftingSystemId], persistedComponents(game, audit.craftingSystemId));
+      // Claim once, before the world write. An interrupted/failed write is left
+      // for manual GM recovery, never replayed after a GM deliberately hides it.
+      await item.update({ 'flags.skybricate.discovery': { version: 1 } });
+      if (!isActiveGM(game)) return;
+      const latest = discoveryContext(game, item);
+      if (!latest || JSON.stringify(latest.audit) !== JSON.stringify(audit)) return;
+      // An Item update can await network I/O. Read settings and assignments again
+      // afterwards so another GM's edits are not replaced by an old snapshot.
+      const current = this.getSnapshot();
+      const allowed = new Set(sources.map(pair => JSON.stringify(pair)));
+      const live = discoverySources(audit, current.systems[audit.craftingSystemId], persistedComponents(game, audit.craftingSystemId))
+        .filter(pair => allowed.has(JSON.stringify(pair)));
+      if (!live.length) return;
+      for (const [componentId, propertyId] of live) {
+        const components = (current.knowledge[actorId] ??= {})[audit.craftingSystemId] ??= {};
+        const ids = components[componentId] ??= [];
+        if (!ids.includes(propertyId)) ids.push(propertyId);
+      }
+      pruneKnowledge(current); validateData(current);
+      await game.settings.set(SETTING_NAMESPACE, SETTING_KEY, copy(current));
     });
   }
 

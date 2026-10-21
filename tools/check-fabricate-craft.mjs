@@ -6,6 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { stockSources } from './fabricate-source.mjs';
 import { installCraftAdapter, getCraftAttempt } from '../scripts/craft-adapter.js';
 import { emptyData, emptySystem, emptyRecipeRules } from '../scripts/data-model.js';
+import { DataStore } from '../scripts/data-store.js';
+import { installCraftDiscovery } from '../scripts/craft-discovery.js';
 
 const { upstream, read } = stockSources(process.argv[2]);
 const cache = resolve('node_modules/.cache'); await mkdir(cache, { recursive: true });
@@ -113,6 +115,31 @@ try {
     const brew = ids => engine.craftAlchemy(actor, [actor], resolveAlchemySubmissions([actor], system.components, ids, 's'), { craftingSystemId: 's' });
     const reload = () => { engine.craftingRunManager = new CraftingRunManager(); };
     return { engine, manager, resolution, system, recipe, sky, actor, initialItems, counters, captures, warnings, runtime, craft, brew, reload, flags, game };
+  }
+
+  function enableDiscovery(f) {
+    const handlers = new Map();
+    f.game.users = { activeGM: f.game.user };
+    f.game.actors.get = id => f.game.actors.find(actor => actor.id === id);
+    f.game.modules = new Map([['fabricate', { active: true, version: '1.9.10' }]]);
+    f.game.settings = {
+      settings: new Map([['fabricate.craftingSystems', { scope: 'world', type: Array }]]),
+      get: ns => structuredClone(ns === 'skybricate' ? f.sky : [f.system]),
+      set: async (ns, key, value) => { assert.equal(ns, 'skybricate'); Object.assign(f.sky, structuredClone(value)); }
+    };
+    const data = new DataStore({ getGame: () => f.game });
+    const service = installCraftDiscovery({ hooks: { on: (name, fn) => handlers.set(name, fn) }, getGame: () => f.game, data,
+      logger: { warn: (...args) => f.warnings.push(args) } });
+    const nativeCreate = f.actor.createEmbeddedDocuments;
+    f.actor.createEmbeddedDocuments = async (...args) => {
+      const items = await nativeCreate(...args);
+      for (const item of items) {
+        const nativeUpdate = item.update;
+        item.update = async patch => { const updated = await nativeUpdate(patch); handlers.get('updateItem')(item, patch); return updated; };
+      }
+      return items;
+    };
+    return { data, service, known: component => f.sky.knowledge.actor?.s?.[component] ?? [], handlers };
   }
 
   let f = fixture(); rolls = 0;
@@ -494,6 +521,51 @@ try {
   f.recipe.resultGroups = [f.recipe.resultGroups[0]]; f.recipe.outcomeRouting = {};
   crafted = await f.craft(); assert.deepEqual(crafted.results, []); assert.equal(f.counters.auditUpdates, 0);
 
+  // Stage 10 observes the same stock awards, via replicated updateItem events.
+  for (const mode of ['simple', 'alchemy', 'progressive']) {
+    f = fixture({ mode }); const discovery = enableDiscovery(f);
+    f.runtime.sourceFlags = { skybricate: { discovery: { version: 1 }, application: { discoveryVersion: 1, itemUuid: 'old' } } };
+    if (mode === 'progressive') {
+      f.system.craftingCheck.progressive = { rollFormula: '1d20', awardMode: 'equal' };
+      f.system.components.find(row => row.id === 'result').difficulty = 10;
+      f.recipe.resultGroups = [f.recipe.resultGroups[0]]; f.recipe.outcomeRouting = {};
+    }
+    crafted = mode === 'alchemy' ? await f.brew(['a', 'b']) : await f.craft();
+    await discovery.service.settle(); assert.equal(crafted.success, true);
+    assert.deepEqual(discovery.known('a'), ['p']); assert.deepEqual(discovery.known('b'), ['p']); assert.deepEqual(discovery.known('c'), []);
+    await discovery.data.setPropertyKnowledge('actor', 's', 'a', 'p', false);
+    discovery.handlers.get('updateItem')(crafted.results[0], { 'flags.skybricate.application': audit(crafted) });
+    await discovery.service.settle(); assert.deepEqual(discovery.known('a'), []);
+    assert(!JSON.stringify(crafted.results.map(item => item.toObject())).includes('Secret property'));
+  }
+  for (const failure of ['rolled', 'creation', 'effect', 'chat', 'noop', 'overwrite', 'limit', 'cancel']) {
+    f = fixture(); const discovery = enableDiscovery(f);
+    if (failure === 'rolled') rollTotal = 1;
+    if (failure === 'creation') f.runtime.createThrows = true;
+    if (failure === 'effect') f.runtime.effectThrows = true;
+    if (failure === 'chat') f.engine._postCraftChatMessage = async () => { throw new Error('chat'); };
+    if (['noop', 'overwrite', 'limit'].includes(failure)) f.recipe.transferEffects = false;
+    if (failure === 'noop') f.runtime.macros['Macro.e'] = 'return {};';
+    if (failure === 'overwrite') { f.runtime.macros['Macro.result'] = 'return {"system.power": 9};'; f.recipe.resultGroups[0].results[0].propertyMacroUuid = 'Macro.result'; }
+    if (failure === 'limit') configure(f, { limitByCheck: true, outcomeLimits: { pass: 0, fail: 0 } });
+    if (failure === 'cancel') f.engine._runCraftingCheck = async () => ({ success: false, cancelled: true });
+    try { await f.craft(); } catch (error) { assert(['creation', 'effect', 'chat'].includes(failure), error.message); }
+    await discovery.service.settle(); assert.deepEqual(discovery.known('a'), [], failure); rollTotal = 17;
+  }
+  f = fixture(); let discovery = enableDiscovery(f);
+  configure(f, { prioritySpecial: true }); f.sky.systems.s.specialComponents.a = ['p']; f.sky.systems.s.components.a = [];
+  await f.craft(); await discovery.service.settle(); assert.deepEqual(discovery.known('a'), ['p']); assert.deepEqual(discovery.known('b'), []);
+  f = fixture({ runs: true }); discovery = enableDiscovery(f); timed(f);
+  await f.craft(); await discovery.service.settle(); assert.deepEqual(discovery.known('a'), []);
+  await f.craft(); await discovery.service.settle(); assert.deepEqual(discovery.known('a'), []);
+  f.reload(); f.game.time.worldTime = 60; await f.craft(); await discovery.service.settle(); assert.deepEqual(discovery.known('a'), ['p']);
+  for (const collapsed of [false, true]) {
+    f = fixture({ runs: true, quantities: [3, 3] }); discovery = enableDiscovery(f); steps(f, { collapsed });
+    await f.craft(); await discovery.service.settle(); assert.deepEqual(discovery.known('a'), ['p']);
+    if (!collapsed) { f.reload(); rollTotal = 1; await f.craft(); await discovery.service.settle(); rollTotal = 17; assert.deepEqual(discovery.known('a'), ['p']); }
+    assert.equal(f.warnings.length, 0, JSON.stringify(f.warnings));
+  }
+
   // Verify the underlying STOCK seams separately from the runtime integration:
   // one precomputed selected map drives BOTH paths; a local
   // definitions list controls macro order. Native configuration stays unchanged.
@@ -510,5 +582,5 @@ try {
   await receiver._transferEffects({ createEmbeddedDocuments: async (type, rows) => effects.push(...rows) }, [], f.recipe, selected, undefined, enabled);
   assert.deepEqual(macroCalls, [['e', 2]]); assert.equal(itemData.system.power, 2); assert.equal(effects.length, 1); assert.deepEqual(f.system, before);
   delete globalThis.__stockMacroProbe;
-  console.log('PASS stock 1.9.10: immediate/alchemy 9b regressions; real CraftingRunManager JSON persistence/reload/deleted sources, timed start/wait/world time/finish, ordinary/collapsed/mixed steps, separate awards and spends, snapshot gates/native essences, timed alchemy/routed/progressive, cancellation/retry, exceptions, legacy/corrupt/stale guards, persistence refusal, isolated timed runs and no duplicate audit.');
+  console.log('PASS stock 1.9.10: 9b/9c craft and persisted runs; stage 10 activeGM discovery from immediate/alchemy/progressive/timed/multistep/collapsed awards, source-clone receipts, negative awards/no-op/overwrite/limit/cancel/errors, manual hiding and duplicate delivery.');
 } finally { await rm(temp, { recursive: true, force: true }); }
