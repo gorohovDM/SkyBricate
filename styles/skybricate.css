@@ -1,4 +1,4 @@
-/* Vocabulary layout/colors come from Fabricate 1.9.10's manager classes. */
+/* Our DOM does not inherit scoped Svelte component styles. */
 .fabricate-manager .skybricate-workspace[hidden],
 .fabricate-manager .manager-tags-categories-workspace[hidden] { display: none; }
 .skybricate-property-panel .skybricate-controls {
@@ -7,8 +7,23 @@
 }
 .skybricate-property-panel p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .skybricate-property-panel [role="status"]:empty { display: none; }
+.skybricate-property-panel .skybricate-controls .manager-vocabulary-form-fields {
+  display: flex; flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: var(--fab-space-2, 8px);
+}
+.skybricate-property-panel .skybricate-controls .manager-vocabulary-form-fields .manager-field {
+  display: flex; flex-direction: column; gap: 4px; flex: 1 1 150px; min-width: 0;
+}
+.skybricate-property-panel .manager-vocabulary-form-fields .manager-field input,
+.skybricate-property-panel .manager-vocabulary-form-fields .manager-field textarea,
+.skybricate-property-panel .manager-vocabulary-form-fields .manager-field select {
+  box-sizing: border-box; width: 100%; min-width: 0; height: 36px; min-height: 36px; margin: 0;
+}
+.skybricate-property-panel .manager-field textarea { resize: vertical; }
+.skybricate-property-panel .manager-vocabulary-form-fields > button { flex: 0 0 auto; width: auto; height: 36px; margin: 0; }
+.skybricate-property-panel .skybricate-craft-hint { margin: 8px 0 0; }
 /* Chip.svelte styles are scoped to that component; match its neutral tokens. */
-.skybricate-property-panel .manager-chip {
+.skybricate-property-panel .manager-chip,
+[data-skybricate-tab] .manager-editor-tab-badge {
   box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
   gap: var(--fab-space-chip); width: fit-content; max-width: 100%; min-height: 20px;
   padding: var(--fab-space-1) var(--fab-space-chip); border: 1px solid var(--fab-border);

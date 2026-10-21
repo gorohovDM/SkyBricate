@@ -1,5 +1,6 @@
 import { mountPropertyPanel } from "./property-panel.js";
 import { persistedRecipes } from './recipe-contract.js';
+import { subscribeData } from './data-store.js';
 
 const MANAGER_ID = "fabricate-crafting-system-manager";
 let surfaceId = 0;
@@ -43,6 +44,13 @@ function mountVocabulary({ surface, systemId, data, text, canWrite }) {
   tab.setAttribute("role", "tab"); tab.setAttribute("aria-controls", `vocabulary-panel-skybricate-${surfaceId}`);
   const icon = doc.createElement("i"); icon.className = "fas fa-tag"; icon.setAttribute("aria-hidden", "true");
   const label = doc.createElement("span"); label.textContent = text("Title"); tab.append(icon, label);
+  const count = doc.createElement('span'); count.className = 'manager-chip manager-editor-tab-badge'; tab.append(count);
+  function syncData() {
+    let value = '—';
+    try { value = String(Object.keys(data.getSnapshot().systems[systemId]?.properties ?? {}).length); } catch { /* Legacy/corrupt data is handled by the panel. */ }
+    if (count.textContent !== value) count.textContent = value;
+    panel?.sync();
+  }
   const target = doc.createElement("div"); target.className = "manager-tags-categories-workspace skybricate-workspace";
   target.id = `vocabulary-panel-skybricate-${surfaceId}`; target.setAttribute("role", "tabpanel");
   target.setAttribute("aria-labelledby", tab.id); target.hidden = true;
@@ -110,9 +118,11 @@ function mountVocabulary({ surface, systemId, data, text, canWrite }) {
   }
   strip.addEventListener("click", click, true); strip.addEventListener("keydown", keydown, true);
   deactivate();
+  syncData();
   return { element: tab, sync(next) {
     if (!target.isConnected || !strip.contains(tab) || next.workspace !== workspace || next.strip !== strip || next.tabs.some((node, i) => node !== tabs[i])) return false;
     if (active && (workspace.id !== nativePanelId || tabs.some(node => node.getAttribute("aria-selected") === "true"))) deactivate();
+    syncData();
     return true;
   }, dispose() {
     deactivate(); strip.removeEventListener("click", click, true); strip.removeEventListener("keydown", keydown, true);
@@ -121,7 +131,7 @@ function mountVocabulary({ surface, systemId, data, text, canWrite }) {
 }
 
 export function installManagerAdapter({ hooks, getGame, data, compatible,
-  notifications, openAssignments, openRecipeRules, Observer = globalThis.MutationObserver }) {
+  notifications, openAssignments, openKnowledge, openRecipeRules, Observer = globalThis.MutationObserver }) {
   const sessions = new Map(), warned = new WeakSet();
   const text = key => getGame().i18n.localize(`SKYBRICATE.Editor.${key}`);
   const allowed = () => getGame().user?.isGM === true && compatible();
@@ -139,7 +149,8 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
     if (!root?.querySelectorAll || !root.ownerDocument || typeof Observer !== "function"
       || typeof store?.selectedSystemId?.subscribe !== "function"
       || typeof store?.viewState?.subscribe !== "function") { warn(app); return; }
-    let selectedId, state, mounted = null, assignmentAction = null, disposed = false, queued = false, connectionObserver = null, recipeEpoch = 0;
+    let selectedId, state, mounted = null, disposed = false, queued = false, connectionObserver = null, recipeEpoch = 0;
+    const headerActions = new Map();
     const recipeActions = new Map();
     const unsubscribers = [];
     function unmount() { mounted?.panel.dispose(); mounted = null; }
@@ -148,7 +159,7 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
       const hosts = root.querySelectorAll('.manager-header-actions');
       return hosts.length === 1 && hosts[0].tagName === 'DIV' ? hosts[0] : null;
     }
-    function disposeAssignmentAction() { assignmentAction?.dispose(); assignmentAction = null; }
+    function disposeHeaderActions() { for (const action of headerActions.values()) action.dispose(); headerActions.clear(); }
     function recipeAvailable(id, epoch) {
       return allowed() && !disposed && root.isConnected && app.element === root && app._adminStore === store
         && selectedId === id && state?.selectedSystem?.id === id && recipeEpoch === epoch;
@@ -191,23 +202,29 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
         recipeActions.set(row, { ...next, button, dispose() { button.removeEventListener('click', click); button.remove(); } });
       }
     }
-    function reconcileAssignmentAction() {
-      const host = allowed() && !disposed && root.isConnected && app.element === root
-        && app._adminStore === store && typeof openAssignments === 'function' ? assignmentHost() : null;
-      if (assignmentAction && (assignmentAction.host !== host || !host?.contains(assignmentAction.button))) disposeAssignmentAction();
-      if (!host || assignmentAction) return;
-      const button = root.ownerDocument.createElement('button');
-      button.type = 'button'; button.className = 'manager-button is-ghost';
-      button.dataset.skybricateAssignments = ''; button.textContent = text('PropertyAssignments');
-      const click = async event => {
-        event.preventDefault(); event.stopPropagation();
-        if (disposed || !allowed() || !root.isConnected || app.element !== root
-          || app._adminStore !== store || assignmentHost() !== host || !host.contains(button)) return;
-        try { await openAssignments(); }
-        catch { notifications()?.warn(text('OpenAssignmentsError')); }
-      };
-      button.addEventListener('click', click); host.append(button);
-      assignmentAction = { host, button, dispose() { button.removeEventListener('click', click); button.remove(); } };
+    function reconcileHeaderActions() {
+      for (const [key, label, errorKey, open] of [
+        ['assignments', 'PropertyAssignments', 'OpenAssignmentsError', openAssignments],
+        ['knowledge', 'OpenKnowledge', 'OpenKnowledgeError', openKnowledge]
+      ]) {
+        const host = allowed() && !disposed && root.isConnected && app.element === root
+          && app._adminStore === store && typeof open === 'function' ? assignmentHost() : null;
+        const current = headerActions.get(key);
+        if (current && (current.host !== host || !host?.contains(current.button))) { current.dispose(); headerActions.delete(key); }
+        if (!host || headerActions.has(key)) continue;
+        const button = root.ownerDocument.createElement('button');
+        button.type = 'button'; button.className = 'manager-button is-ghost';
+        button.setAttribute(`data-skybricate-${key}`, ''); button.textContent = text(label);
+        const click = async event => {
+          event.preventDefault(); event.stopPropagation();
+          if (disposed || !allowed() || !root.isConnected || app.element !== root
+            || app._adminStore !== store || assignmentHost() !== host || !host.contains(button)) return;
+          try { await open(); }
+          catch { notifications()?.warn(text(errorKey)); }
+        };
+        button.addEventListener('click', click); host.append(button);
+        headerActions.set(key, { host, button, dispose() { button.removeEventListener('click', click); button.remove(); } });
+      }
     }
     function context() {
       if (!allowed() || disposed || !root.isConnected || app.element !== root || app._adminStore !== store) return null;
@@ -226,7 +243,7 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
       if (disposed) return;
       try {
         if (root.isConnected && connectionObserver) { connectionObserver.disconnect(); connectionObserver = null; }
-        reconcileAssignmentAction();
+        reconcileHeaderActions();
         reconcileRecipeActions();
         const next = context();
         if (mounted && (!next || mounted.id !== next.id || mounted.target !== next.target
@@ -257,7 +274,7 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
     const session = { root, store, schedule, dispose() {
       disposed = true; observer.disconnect(); connectionObserver?.disconnect(); connectionObserver = null;
       for (const unsubscribe of unsubscribers) unsubscribe();
-      disposeAssignmentAction();
+      disposeHeaderActions();
       for (const action of recipeActions.values()) action.dispose(); recipeActions.clear();
       unmount();
     } };
@@ -283,8 +300,9 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
     for (const [app, session] of sessions) { if (!allowed()) close(app); else session.schedule(); }
   });
   const settingHook = hooks.on('updateSetting', setting => {
-    if (!['fabricate.recipes', 'fabricate.craftingSystems'].includes(setting.key) || !allowed()) return;
+    if (!['fabricate.recipes', 'fabricate.craftingSystems', 'skybricate.data'].includes(setting.key) || !allowed()) return;
     for (const session of sessions.values()) session.schedule();
+    if (setting.key === 'skybricate.data') return;
     // Strict corpus read must succeed before cleanup. A failed native write never
     // fires a setting update. Queue rechecks the persisted corpus before deleting.
     try {
@@ -294,7 +312,9 @@ export function installManagerAdapter({ hooks, getGame, data, compatible,
       if (stale) void data.reconcileRecipeRules({ canWrite: allowed }).catch(() => notifications()?.warn(text('Contract')));
     } catch { notifications()?.warn(text('Contract')); }
   });
+  const unsubscribeData = subscribeData(() => { for (const session of sessions.values()) session.schedule(); });
   return () => {
+    unsubscribeData();
     for (const app of sessions.keys()) close(app);
     hooks.off("renderApplicationV2", renderHook); hooks.off("closeApplicationV2", closeHook); hooks.off("updateUser", userHook);
     hooks.off('updateSetting', settingHook);

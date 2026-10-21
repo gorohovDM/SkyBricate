@@ -7,6 +7,7 @@ import { installCraftAdapter, getCraftAttempt } from '../scripts/craft-adapter.j
 import { mountPropertyPanel } from '../scripts/property-panel.js';
 import { consumedSelection } from '../scripts/craft-application.js';
 import { fingerprint, runRevision, runBinding, validateRun } from '../scripts/craft-run-context.js';
+import { readFileSync } from 'node:fs';
 
 export function craftFixture({ resolveUuid } = {}) {
   const sky = emptyData(), system = { id: 's', name: 'System', resolutionMode: 'simple',
@@ -215,6 +216,27 @@ test('9a unresolved/empty macros and missing effect sources fail preflight befor
   const f = craftFixture({ resolveUuid: async () => null }); f.recipe.transferEffects = true;
   delete f.system.essenceDefinitions[0].propertyMacroUuid;
   assert.equal((await f.craft()).success, false); assert.equal(f.counters.rolls + f.counters.consumes, 0);
+});
+
+test('craft configuration diagnostics explain prerequisites to GMs without exposing names to players', async () => {
+  for (const language of ['en', 'ru']) {
+    const translations = JSON.parse(readFileSync(new URL(`../lang/${language}.json`, import.meta.url), 'utf8')).SKYBRICATE;
+    for (const [code, mutate] of [
+      ['EssenceRequired', f => delete f.sky.systems.s.properties.p.essenceId],
+      ['MacroUnavailable', f => f.system.essenceDefinitions[0].propertyMacroUuid = 'Item.not-a-macro'],
+      ['EffectUnavailable', f => { f.system.features.propertyMacros = false; f.recipe.transferEffects = true; }],
+      ['BehaviourRequired', f => f.system.features.propertyMacros = false]
+    ]) {
+      const f = craftFixture({ resolveUuid: async () => null }); mutate(f);
+      f.game.i18n = { localize: key => key.split('.').slice(1).reduce((value, part) => value?.[part], translations) ?? key };
+      const gm = await f.craft(); assert.equal(gm.message, translations.Craft[code]);
+      assert.equal(f.counters.rolls + f.counters.consumes, 0);
+      f.game.user.isGM = false;
+      const player = await f.craft(); assert.equal(player.message, translations.Craft.AskGM);
+      assert(!JSON.stringify(player).includes('Secret')); assert.equal(f.warnings.length, 1);
+      assert.equal(f.counters.rolls + f.counters.consumes, 0); f.dispose();
+    }
+  }
 });
 
 test('schema6 keeps schema5 rules/knowledge and private links validate IDs/uniqueness without native writes', async () => {

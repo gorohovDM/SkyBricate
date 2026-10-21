@@ -28,8 +28,14 @@ export function systemEssences(game, systemId) {
 
 const configured = (system, recipeId) => system && (Object.values(system.components).some(ids => ids.length)
   || Object.values(system.specialComponents).some(ids => ids.length) || Object.hasOwn(system.recipeRules, recipeId));
-const failed = () => ({ success: false, results: null, disposition: 'skybricate-configuration',
-  message: 'SkyBricate: crafting configuration is unavailable or unsupported; ask the GM.' });
+const configurationError = (code, message) => Object.assign(new Error(message), { skybricateCode: code });
+function failed(game, error) {
+  const key = `SKYBRICATE.Craft.${game.user?.isGM ? error?.skybricateCode ?? 'Configuration' : 'AskGM'}`;
+  const localized = game.i18n?.localize(key);
+  const fallback = game.user?.isGM ? `SkyBricate: ${error?.message ?? 'Check crafting configuration.'}`
+    : 'SkyBricate: crafting configuration is unavailable or unsupported; ask the GM.';
+  return { success: false, results: null, disposition: 'skybricate-configuration', message: localized && localized !== key ? localized : fallback };
+}
 
 // Use the stock matcher, including durable identity/source refs and legacy fallback.
 // Ambiguous attribution cannot invent provenance: abort before roll/consumption.
@@ -76,23 +82,23 @@ async function validateBehaviours(engine, candidates, sky, system, recipe, resol
   for (const selected of candidates) {
     const essenceId = sky.properties[selected.propertyId].essenceId;
     const matches = definitions.filter(definition => definition.id === essenceId);
-    if (!essenceId || matches.length !== 1 || matches[0].enabled === false) throw new Error('Property needs a current enabled essence');
+    if (!essenceId || matches.length !== 1 || matches[0].enabled === false) throw configurationError('EssenceRequired', 'Property needs a current enabled essence');
     const definition = matches[0];
     let macro = false, effects = false;
     if (system.features?.essences === true && system.features?.propertyMacros === true && definition.propertyMacroUuid) {
-      const doc = await resolveUuid(definition.propertyMacroUuid);
-      if (!doc || doc.type !== 'script' || typeof doc.command !== 'string' || !doc.command.trim()) throw new Error('Essence macro is unavailable');
+      const doc = await Promise.resolve().then(() => resolveUuid(definition.propertyMacroUuid)).catch(() => null);
+      if (!doc || doc.type !== 'script' || typeof doc.command !== 'string' || !doc.command.trim()) throw configurationError('MacroUnavailable', 'Essence macro is unavailable');
       macro = true;
     }
     if (system.features?.essences === true && system.features?.effectTransfer === true && recipe.transferEffects === true) {
       const uuid = engine._sourceUuidForEssenceDefinition(definition, system);
       if (uuid) {
-        const doc = await resolveUuid(uuid);
-        if (!doc) throw new Error('Essence effect source is unavailable');
+        const doc = await Promise.resolve().then(() => resolveUuid(uuid)).catch(() => null);
+        if (!doc) throw configurationError('EffectUnavailable', 'Essence effect source is unavailable');
         effects = Array.from(doc.effects ?? []).length > 0;
       }
     }
-    if (!macro && !effects) throw new Error('Essence has no enabled behaviour for this recipe');
+    if (!macro && !effects) throw configurationError('BehaviourRequired', 'Essence has no enabled behaviour for this recipe');
     linked.push({ propertyId: selected.propertyId, essenceId });
   }
   return linked;
@@ -104,7 +110,7 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
   const methods = ['craft', 'craftAlchemy', '_resolveCraftSelection', '_runCraftingCheck', '_sourceUuidForEssenceDefinition'];
   if (methods.some(key => typeof engine[key] !== 'function')) throw new Error('Unsupported Fabricate crafting contract');
   const nativeCraft = engine.craft, nativeAlchemy = engine.craftAlchemy;
-  const reject = error => { if (getGame().user?.isGM) logger.warn('SkyBricate | Craft preflight rejected:', error.message); return failed(); };
+  const reject = error => { if (getGame().user?.isGM) logger.warn('SkyBricate | Craft preflight rejected:', error.message); return failed(getGame(), error); };
   async function execute(receiver, args, submissions = null) {
     const [actor, sources, recipe, , options = {}] = args;
     const runManager = engine.craftingRunManager || getGame().fabricate.getCraftingRunManager?.();
@@ -196,8 +202,7 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
       try {
         await preflight();
       } catch (error) {
-        reject(error);
-        return { success: false, misconfigured: true, message: failed().message };
+        return { ...reject(error), misconfigured: true };
       }
       const check = await nativeCheck.apply(this, checkArgs);
       if (check.cancelled || check.misconfigured) return check;
@@ -214,8 +219,7 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
           ...(prepared ? { essenceEnabled: copy(prepared.essenceEnabled) } : {}),
           selected: selected.map(property => ({ ...property, essenceId: links.find(link => link.propertyId === property.propertyId).essenceId })) });
       } catch (error) {
-        reject(error);
-        return { success: false, misconfigured: true, message: failed().message };
+        return { ...reject(error), misconfigured: true };
       }
       return check;
     };

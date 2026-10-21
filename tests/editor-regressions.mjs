@@ -6,15 +6,16 @@ import { managerFixture, vocabularyMarkup, readable, settleDOM } from "./helpers
 
 function fixture(options) {
   let persisted = emptyData(), writes = 0, reject = false, gate = null, next = 0;
+  const systems = ['a','b'].map(id => ({id, components:['special', 'second'].map(id => ({id}))}));
   const storageGame = { user: { isGM: true }, modules: new Map([['fabricate', { active: true, version: '1.9.10' }]]), settings: {
     settings: new Map([['fabricate.craftingSystems', { scope: 'world', type: Array }]]),
-    get(ns) { if (ns === 'fabricate') return ['a','b'].map(id => ({id,components:[{id:'special'}]})); return structuredClone(persisted); },
+    get(ns) { if (ns === 'fabricate') return structuredClone(systems); return structuredClone(persisted); },
     async set(ns, key, value) { assert.equal(ns, "skybricate"); assert.equal(key, "data"); if (gate) await gate;
       if (reject) throw new Error("disk failure"); persisted = structuredClone(value); writes++; }
   } };
   const data = new DataStore({ getGame: () => storageGame, idFactory: () => `p-${++next}` });
   const f = managerFixture(data, options);
-  return Object.assign(f, { data, getWrites: () => writes, reject: value => { reject = value; },
+  return Object.assign(f, { data, systems, getWrites: () => writes, reject: value => { reject = value; },
     gate: value => { gate = value; }, corrupt: value => { persisted = value; } });
 }
 const action = (f, name, container = f.panel()) => container.querySelector(`[data-sky-action="${name}"]`).click();
@@ -24,6 +25,75 @@ const start = async f => { f.render(); await settleDOM(); f.open(); };
 const native = (f, id) => f.root.querySelector(`[data-vocabulary-tab="${id}"]`);
 const key = (f, node, key) => node.dispatchEvent(new f.window.KeyboardEvent("keydown", { key, bubbles: true }));
 const legacy = () => ({ schemaVersion: 1, properties: { old: { name: "Old test", description: "" } }, systems: {} });
+
+test('property tab and linked component counts follow saved changes without replacing drafts or looping', async t => {
+  const f = fixture(); t.after(() => f.destroy());
+  const p = await f.data.createProperty('a', { name: 'One' });
+  const other = await f.data.createProperty('b', { name: 'Other system' });
+  let saved = f.data.getSnapshot();
+  saved.systems.a.components = { special: [p], deleted: [p] };
+  saved.systems.a.specialComponents = { second: [p] };
+  saved.systems.b.components = { special: [other] };
+  f.corrupt(saved);
+  await start(f); await settleDOM();
+  const badge = () => f.tab().querySelector('.manager-editor-tab-badge').textContent;
+  const usage = () => f.panel().querySelector(`[data-sky-usage="${p}"]`).textContent;
+  assert.equal(badge(), '1'); assert.equal(usage(), 'LinkedComponents: 2');
+  field(f, 'name', 'Unsaved draft'); field(f, 'description', 'Keep this');
+  const input = f.panel().querySelector('[data-sky-field="name"]'); input.focus(); input.setSelectionRange(2, 5);
+  saved = f.data.getSnapshot(); saved.systems.a.properties.external = { name: 'External', description: '' };
+  f.corrupt(saved); f.hooks.fire('updateSetting', { key: 'skybricate.data' }); await settleDOM();
+  assert.equal(badge(), '2'); assert.equal(f.panel().querySelector('[data-sky-field="name"]').value, 'Unsaved draft');
+  assert.equal(f.panel().querySelector('[data-sky-field="description"]').value, 'Keep this');
+  assert.equal(f.window.document.activeElement.selectionStart, 2);
+  const current = f.panel().querySelector('[data-sky-field="name"]');
+  f.systems[0].components.pop(); f.hooks.fire('updateSetting', { key: 'fabricate.craftingSystems' }); await settleDOM();
+  assert.equal(usage(), 'LinkedComponents: 1'); assert.equal(f.panel().querySelector('[data-sky-field="name"]'), current);
+  saved = f.data.getSnapshot(); saved.systems.a.components.special = []; delete saved.systems.a.properties.external;
+  f.corrupt(saved); f.hooks.fire('updateSetting', { key: 'skybricate.data' }); await settleDOM();
+  assert.equal(badge(), '1'); assert.equal(usage(), 'LinkedComponents: 0');
+  const components = f.systems[0].components; f.systems[0].components = null;
+  f.hooks.fire('updateSetting', { key: 'fabricate.craftingSystems' }); await settleDOM();
+  assert.equal(usage(), 'UsageUnavailable');
+  assert.equal(f.panel().querySelector('[data-sky-field="name"]').value, 'Unsaved draft');
+  f.systems[0].components = components;
+  action(f, 'save'); await settleDOM(); assert.equal(badge(), '2');
+  const card = f.panel().querySelector('[data-property-id="p-3"]');
+  action(f, 'delete', card); action(f, 'confirm-delete'); await settleDOM(); assert.equal(badge(), '1');
+  const callbacks = f.observerCallbacks; await settleDOM(); assert.equal(f.observerCallbacks, callbacks);
+  f.selectedSystemId.set('b'); f.viewState.set({ selectedSystem: { id: 'b', resolutionMode: 'simple' } });
+  await settleDOM(); assert.equal(badge(), '1');
+});
+
+test('GM knowledge header button opens the existing editor and rejects stale or unauthorized actions', async t => {
+  let opens = 0, reject = false;
+  const f = fixture({ openAssignments() {}, openKnowledge: async () => { opens++; if (reject) throw Error('closed'); } });
+  t.after(() => f.destroy());
+  const header = '<div class="manager-header-actions"><button>Native</button></div>';
+  const button = () => f.root.querySelector('[data-skybricate-knowledge]');
+  f.root.innerHTML = header + vocabularyMarkup(); f.render(); await settleDOM();
+  assert.equal(button().textContent, 'OpenKnowledge'); assert(button().previousElementSibling.hasAttribute('data-skybricate-assignments'));
+  button().click(); await settleDOM(); assert.equal(opens, 1);
+  f.render(); await settleDOM(); assert.equal(f.root.querySelectorAll('[data-skybricate-knowledge]').length, 1);
+  const old = button(); f.root.innerHTML = header + '<main>Other view</main>'; await settleDOM();
+  old.click(); assert.equal(opens, 1);
+  f.compatible = false; button().click(); assert.equal(opens, 1); f.compatible = true;
+  f.game.user.isGM = false; button().click(); assert.equal(opens, 1); f.game.user.isGM = true;
+  reject = true; button().click(); await settleDOM(); assert.deepEqual(f.warnings, ['OpenKnowledgeError']);
+  const closed = button(); f.close(); closed.click(); assert.equal(opens, 2); assert.equal(button(), null);
+  assert.equal(f.observerCount, 0);
+});
+
+test('external deletion of the edited property preserves its draft and cannot recreate it on save', async t => {
+  const f = fixture(); t.after(() => f.destroy());
+  const id = await f.data.createProperty('a', { name: 'Before' }); await start(f);
+  action(f, 'edit'); field(f, 'name', 'My unsaved edit');
+  await f.data.deleteProperty('a', id); f.hooks.fire('updateSetting', { key: 'skybricate.data' }); await settleDOM();
+  assert.equal(f.panel().querySelector('[data-sky-field="name"]').value, 'My unsaved edit'); assert.equal(status(f), 'Missing');
+  action(f, 'save'); await settleDOM(); assert.match(status(f), /Error/);
+  assert.deepEqual(f.data.getSnapshot().systems.a.properties, {});
+  assert.equal(f.panel().querySelector('[data-sky-field="name"]').value, 'My unsaved edit');
+});
 
 test("manager assignments action survives navigation and rerender; stale actions and failures are safe", async t => {
   let opens = 0, reject = false;
@@ -171,10 +241,10 @@ test("scoped CRUD stable IDs, safe strings, pending, confirmation and cleanup on
   assert(f.panel().querySelector('input[type="search"]').disabled); assert.match(f.panel().textContent,/Entries: 0/);
 });
 
-test("native vocabulary styling, fixed tag icon, honest usage placeholder, no icon editor", async t=>{
+test("native vocabulary styling, fixed tag icon, saved usage count, no icon editor", async t=>{
   const f=fixture(); t.after(()=>f.destroy()); await f.data.createProperty("a",{name:"Healing"}); await start(f);
   assert(f.panel().classList.contains("manager-vocabulary-panel")); assert(f.panel().querySelector('.manager-vocabulary-form-fields'));
-  assert(f.panel().querySelector('.manager-vocabulary-row .fas.fa-tag')); assert.match(f.panel().textContent,/UsageUnavailable/);
+  assert(f.panel().querySelector('.manager-vocabulary-row .fas.fa-tag')); assert.match(f.panel().textContent,/LinkedComponents: 0/);
   assert.equal(f.panel().querySelector('[data-vocabulary-icon-picker],input[type="color"]'),null);
 });
 

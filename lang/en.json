@@ -29,7 +29,7 @@
       "Missing": "This property no longer exists. Reload the catalog.",
       "Unavailable": "This editor context is no longer available. Reopen Tags & Categories.",
       "Contract": "SkyBricate: unsupported Fabricate editor structure. The property tab is disabled for this context.",
-      "Scoped": "Properties belong to the selected crafting system. Crafting does not apply them yet.",
+      "Scoped": "Properties belong to the selected crafting system.",
       "Add": "Add",
       "SearchUnavailable": "Search is not available yet",
       "Entries": "Properties",
@@ -76,7 +76,10 @@
       "Known": "Known",
       "Unknown": "Unknown",
       "RevealKnowledge": "Reveal",
-      "HideKnowledge": "Hide"
+      "HideKnowledge": "Hide",
+      "LinkedComponents": "Linked components",
+      "CraftPrerequisite": "To apply a property during crafting, link it to an enabled Fabricate essence. Enable essences and property macros with a working script macro, or effect transfer with an ActiveEffects source and transfer enabled in the recipe. Component assignments alone are insufficient.",
+      "OpenKnowledgeError": "Could not open character property knowledge. Please try again."
     },
     "Player": {
       "Title": "Component properties",
@@ -121,6 +124,14 @@
       "Unavailable": "This window lost its manager context or GM access. Reopen rules from the recipe row.",
       "Strength": "Strength of each property (independent of count limit)",
       "InvalidStrength": "Enter a positive finite strength for every outcome."
+    },
+    "Craft": {
+      "AskGM": "SkyBricate: crafting property configuration is unavailable. Ask the GM.",
+      "Configuration": "SkyBricate: check saved components, recipe rules and crafting run state. The GM console contains the rejection details.",
+      "EssenceRequired": "SkyBricate: a selected property needs a current enabled essence. Open SkyBricate properties and link an essence of this system.",
+      "MacroUnavailable": "SkyBricate: the linked essence script macro is missing, unavailable or empty. Fix its macro in Fabricate.",
+      "EffectUnavailable": "SkyBricate: the linked essence effect source is unavailable. Check its source Item or component.",
+      "BehaviourRequired": "SkyBricate: the linked essence has no enabled behaviour for this recipe. Enable essences and property macros with a script macro, or effect transfer with an ActiveEffects source and transfer enabled in the recipe."
     }
   }
 }

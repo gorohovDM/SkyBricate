@@ -73,7 +73,7 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
       };
       if (module) module.api = Object.freeze({ data, openAssignments, openKnowledge, openRecipeRules, selectProperties });
       if (getGame().user?.isGM) installManagerAdapter({ hooks, getGame, data, notifications,
-        openAssignments, openRecipeRules,
+        openAssignments, openKnowledge, openRecipeRules,
         compatible: () => checkCompatibility(getGame()) === null });
       terminal = true;
       status.ready = true;
