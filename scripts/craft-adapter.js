@@ -3,6 +3,7 @@ import { selectProperties } from './property-selection.js';
 import { recipeOutcomes, validateOutcomeLimits, outcomeStrength } from './recipe-contract.js';
 import { installResultApplication } from './craft-application.js';
 import { persistedSystems } from './assignment-contract.js';
+import { fingerprint, runRevision, runBinding, validateRun } from './craft-run-context.js';
 
 // Private module context, never attached to Items, runs, chat, hooks or module.api.
 // Every native invocation receives its own receiver, including concurrent crafts.
@@ -29,16 +30,6 @@ const configured = (system, recipeId) => system && (Object.values(system.compone
   || Object.values(system.specialComponents).some(ids => ids.length) || Object.hasOwn(system.recipeRules, recipeId));
 const failed = () => ({ success: false, results: null, disposition: 'skybricate-configuration',
   message: 'SkyBricate: crafting configuration is unavailable or unsupported; ask the GM.' });
-
-function supported(engine, actor, recipe, system, options, fallbackRunManager) {
-  const steps = recipe.getExecutionSteps?.() ?? [{ timeRequirement: recipe.timeRequirement }];
-  const runManager = engine.craftingRunManager || fallbackRunManager;
-  const run = options.runId ? runManager?.getActiveRun?.(actor, options.runId) : runManager?.findActiveRunForRecipe?.(actor, recipe.id);
-  if (system.resolutionMode === 'progressive' || steps.length !== 1 || steps[0]?.timeRequirement
-    || run?.steps?.some(step => step.timeGate || step.preparedConsumption) || Number(run?.currentStepIndex ?? 0) !== 0) {
-    throw new Error('Stage 9a supports immediate single-step crafts only');
-  }
-}
 
 // Use the stock matcher, including durable identity/source refs and legacy fallback.
 // Ambiguous attribution cannot invent provenance: abort before roll/consumption.
@@ -116,20 +107,81 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
   const reject = error => { if (getGame().user?.isGM) logger.warn('SkyBricate | Craft preflight rejected:', error.message); return failed(); };
   async function execute(receiver, args, submissions = null) {
     const [actor, sources, recipe, , options = {}] = args;
-    let sky, rules, system;
+    const runManager = engine.craftingRunManager || getGame().fabricate.getCraftingRunManager?.();
+    let run = options.runId ? runManager?.getActiveRun?.(actor, options.runId) : runManager?.findActiveRunForRecipe?.(actor, recipe.id);
+    let sky, rules, system, revision, prepared;
     try {
       sky = data.getSnapshot().systems[recipe?.craftingSystemId];
-      if (!configured(sky, recipe.id)) return nativeCraft.apply(receiver, args);
+      if (!configured(sky, recipe.id) && !run?.skybricate) return nativeCraft.apply(receiver, args);
+      if (!sky) throw new Error('Missing SkyBricate configuration');
       const liveSystem = getGame().fabricate.getCraftingSystemManager().getSystem(recipe.craftingSystemId);
       system = liveSystem && copy(liveSystem.toJSON?.() ?? liveSystem);
       if (!system) throw new Error('Missing crafting system');
-      supported(receiver, actor, recipe, system, options, getGame().fabricate.getCraftingRunManager?.());
       rules = copy(sky.recipeRules[recipe.id] ?? {});
       validateOutcomeLimits(rules, recipeOutcomes(system));
+      revision = runRevision(system, sky, recipe);
+      if (run) prepared = validateRun(run, runBinding(actor, recipe, revision, run), system);
+      const steps = recipe.getExecutionSteps?.() ?? [{}];
+      if (!runManager && (steps.length > 1 || steps.some(step => step.timeRequirement))) throw new Error('Crafting run manager is required');
     } catch (error) { return reject(error); }
-    const scope = Object.create(receiver);
-    let rows = null, links = null;
-    const nativeSelection = receiver._resolveCraftSelection, nativeCheck = receiver._runCraftingCheck;
+    const scope = Object.create(engine);
+    // Collapsed chains recurse through craft. Start a fresh receiver for each
+    // step rather than nesting the previous step's selection/check wrappers.
+    scope.craft = (...nextArgs) => execute(engine, nextArgs);
+    let rows = prepared?.composition ?? null, links = null;
+    const nativeSelection = engine._resolveCraftSelection, nativeCheck = engine._runCraftingCheck;
+    const preflight = async () => {
+      if (!rows) throw new Error('Native plan was not captured');
+      const componentIds = rows.map(row => row.componentId).filter(Boolean);
+      const selections = rules.limitByCheck ? recipeOutcomes(system).flatMap(outcome => selectProperties({
+        system: sky, componentIds, recipeRules: rules, outcome: outcome.id }))
+        : selectProperties({ system: sky, componentIds, recipeRules: rules });
+      const candidates = [...new Map(selections.map(property => [property.propertyId, property])).values()];
+      const behaviours = copy(system);
+      if (prepared) for (const definition of behaviours.essenceDefinitions ?? []) definition.enabled = prepared.essenceEnabled[definition.id];
+      links = await validateBehaviours(scope, candidates, sky, behaviours, recipe, resolveUuid);
+    };
+    if (runManager) {
+      const manager = Object.create(runManager);
+      scope.craftingRunManager = manager;
+      for (const key of ['getActiveRun', 'findActiveRunForRecipe']) manager[key] = function (...lookupArgs) {
+        const current = runManager[key](...lookupArgs);
+        if (current) run = current;
+        return current;
+      };
+      manager.createRun = async function (...createArgs) {
+        run = await runManager.createRun(...createArgs);
+        run.skybricate = runBinding(actor, recipe, revision, run);
+        await runManager.updateRun(actor, run);
+        return run;
+      };
+      manager.markStepPrepared = async function (owner, current, index, snapshot) {
+        const state = current.steps[index].skybricate;
+        if (!state) throw new Error('Missing pre-consumption provenance');
+        state.prepared = fingerprint(snapshot);
+        return runManager.markStepPrepared(owner, current, index, snapshot);
+      };
+      const nativeConsume = engine._consumeIngredients;
+      scope._consumeIngredients = async function (...consumeArgs) {
+        // Timed START has no roll seam. Validate every possible selection and
+        // durably save identities BEFORE native deletion of source documents.
+        if (!attempts.has(scope)) {
+          // Unlike the immediate alchemy path, stock timed START consumes only
+          // the selection plan; submitted alchemy extras are not consumed here.
+          if (rows) rows = rows.filter(row => row.kind === 'ingredient');
+          try { await preflight(); }
+          catch (error) { error.skybricatePreflight = true; throw error; }
+        }
+        if (run) {
+          const index = run.currentStepIndex, step = run.steps[index];
+          const essenceEnabled = Object.fromEntries((system.essenceDefinitions ?? []).map(row => [row.id, row.enabled !== false]));
+          step.skybricate = { index, stepId: step.stepId, composition: copy(rows), essenceEnabled,
+            digest: fingerprint([rows, essenceEnabled]) };
+          await runManager.updateRun(actor, run);
+        }
+        return nativeConsume.apply(this, consumeArgs);
+      };
+    }
     scope._resolveCraftSelection = function (...selectionArgs) {
       try {
         const selection = nativeSelection.apply(this, selectionArgs);
@@ -142,13 +194,7 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
     };
     scope._runCraftingCheck = async function (...checkArgs) {
       try {
-        if (!rows) throw new Error('Native plan was not captured');
-        const componentIds = rows.map(row => row.componentId).filter(Boolean);
-        const selections = rules.limitByCheck ? recipeOutcomes(system).flatMap(outcome => selectProperties({
-          system: sky, componentIds, recipeRules: rules, outcome: outcome.id }))
-          : selectProperties({ system: sky, componentIds, recipeRules: rules });
-        const candidates = [...new Map(selections.map(property => [property.propertyId, property])).values()];
-        links = await validateBehaviours(this, candidates, sky, system, recipe, resolveUuid);
+        await preflight();
       } catch (error) {
         reject(error);
         return { success: false, misconfigured: true, message: failed().message };
@@ -158,13 +204,14 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
       try {
         const mode = system.resolutionMode === 'alchemy' ? system.alchemy?.checkMode : system.resolutionMode;
         // Never use a routed display name as an ID. No-roll success has no outcome.
-        const outcomeId = ['tiered', 'routedByCheck'].includes(mode) ? check.data?.outcomeId
+        const outcomeId = !recipeOutcomes(system).length ? null : ['tiered', 'routedByCheck'].includes(mode) ? check.data?.outcomeId
           : ['pass', 'fail'].includes(check.outcome) ? check.outcome : null;
         if (rules.limitByCheck && !recipeOutcomes(system).some(row => row.id === outcomeId)) throw new Error('Unknown check outcome ID');
         const selected = selectProperties({ system: sky, componentIds: rows.map(row => row.componentId).filter(Boolean), recipeRules: rules, outcome: outcomeId });
         const strength = outcomeStrength(rules, recipeOutcomes(system), outcomeId);
         attempts.set(scope, { craftingSystemId: recipe.craftingSystemId, recipeId: recipe.id,
           actorUuid: actor.uuid, composition: copy(rows), checkResult: copy(check), outcomeId, strength,
+          ...(prepared ? { essenceEnabled: copy(prepared.essenceEnabled) } : {}),
           selected: selected.map(property => ({ ...property, essenceId: links.find(link => link.propertyId === property.propertyId).essenceId })) });
       } catch (error) {
         reject(error);
@@ -173,8 +220,18 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
       return check;
     };
     const finalize = installResultApplication(scope, { system, sky, attempt: () => attempts.get(scope), resolveUuid });
+    if (typeof engine._postCraftChatMessage === 'function') {
+      scope._postCraftChatMessage = async function (...chatArgs) {
+        const posted = await engine._postCraftChatMessage.apply(this, chatArgs);
+        // A collapsed chain returns only its last award. Earlier actual awards
+        // are confirmed by the completed step's native chat seam before recursion.
+        await finalize({ success: chatArgs[0].success, results: chatArgs[0].createdResults });
+        return posted;
+      };
+    }
     // Native failures after consumption propagate; there is no fabricated rollback.
     try { const result = await nativeCraft.apply(scope, args); await finalize(result); return result; }
+    catch (error) { if (error.skybricatePreflight) return reject(error); throw error; }
     finally { attempts.delete(scope); }
   }
   const craft = function (...args) { return execute(this, args); };
