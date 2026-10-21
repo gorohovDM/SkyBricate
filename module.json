@@ -1,7 +1,7 @@
 {
   "id": "skybricate",
   "title": "SkyBricate — Hidden Properties for Fabricate",
-  "description": "Shared property catalog and GM editor in Fabricate alchemy settings. Gameplay integration is not implemented yet.",
+  "description": "Hidden component properties for Fabricate: GM catalogs and assignments, character knowledge, recipe rules, craft result effects and automatic discovery.",
   "version": "0.2.0",
   "authors": [{ "name": "gorohovDM" }],
   "compatibility": { "minimum": "13", "maximum": "14" },
