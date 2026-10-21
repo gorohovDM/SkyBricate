@@ -65,7 +65,7 @@ export function installResultApplication(scope, { system, sky, attempt, resolveU
     // Object.keys on a plain record reorders integer-like IDs. A local view keeps
     // the same authored order for stock effect transfer without splitting batches.
     const orderedResolved = () => new Proxy({ ...resolved }, { ownKeys: () => ids });
-    const enabled = Object.fromEntries(definitions.map(definition => [definition.id, definition.enabled !== false]));
+    const enabled = attempt().essenceEnabled ?? Object.fromEntries(definitions.map(definition => [definition.id, definition.enabled !== false]));
     const receiver = Object.create(this), writes = new Map(), createdEffects = new Map();
     const nativeBuild = this._buildEssenceContext, nativeSource = this._sourceUuidForEssenceDefinition;
     receiver._buildEssenceContext = function (items, nativeRecipe, precomputed, resolver) {
@@ -179,6 +179,9 @@ export function installResultApplication(scope, { system, sky, attempt, resolveU
   // A later result/chat exception or a swallowed failure-award exception must
   // not leave a completed audit on an earlier, partially produced output.
   return async result => {
-    for (const row of pending) if (result?.results?.includes(row.item)) await row.finalize(result);
+    for (const row of pending) if (!row.finalized && result?.results?.includes(row.item)) {
+      row.finalized = true;
+      await row.finalize(result);
+    }
   };
 }

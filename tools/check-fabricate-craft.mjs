@@ -34,19 +34,23 @@ globalThis.Roll = class {
 };
 
 try {
-  for (const path of ['src/systems/CraftingEngine.js', 'src/systems/RecipeManager.js', 'src/systems/ResolutionModeService.js', 'src/models/Recipe.js', 'src/utils/alchemySubmissions.js']) await prepare(path);
+  for (const path of ['src/systems/CraftingEngine.js', 'src/systems/CraftingRunManager.js', 'src/systems/RecipeManager.js', 'src/systems/ResolutionModeService.js', 'src/models/Recipe.js', 'src/utils/alchemySubmissions.js']) await prepare(path);
   const stock = path => import(pathToFileURL(resolve(temp, path)));
   const { CraftingEngine } = await stock('src/systems/CraftingEngine.js');
+  const { CraftingRunManager } = await stock('src/systems/CraftingRunManager.js');
   const { RecipeManager } = await stock('src/systems/RecipeManager.js');
   const { Recipe } = await stock('src/models/Recipe.js');
   const { ResolutionModeService } = await stock('src/systems/ResolutionModeService.js');
   const { resolveAlchemySubmissions } = await stock('src/utils/alchemySubmissions.js');
 
-  function fixture({ mode = 'simple', checkMode = 'simple', quantities = [3, 1], groups = ['a', 'b'], configured = true } = {}) {
+  function fixture({ mode = 'simple', checkMode = 'simple', quantities = [3, 1], groups = ['a', 'b'], configured = true, runs = false } = {}) {
     const counters = { updates: 0, deletes: 0, creates: 0, auditUpdates: 0, effectCalls: 0, effects: 0, macroCalls: 0, selections: 0, consumes: 0 }, captures = [], warnings = [];
     const runtime = { macros: { 'Macro.e': 'return {"system.power": context.essenceQuantity};' },
       effects: [{ name: 'Effect', changes: [{ key: 'system.power', value: 1 }] }], sourceSystem: { quantity: 1 } };
     const actor = { id: 'actor', uuid: 'Actor.actor', name: 'Actor', items: [], getRollData: () => ({}) };
+    const flags = {};
+    actor.getFlag = (scope, key) => structuredClone(flags[`${scope}.${key}`]);
+    actor.setFlag = async (scope, key, value) => { flags[`${scope}.${key}`] = JSON.parse(JSON.stringify(value)); };
     const item = (id, quantity) => ({ id, uuid: `Actor.actor.Item.${id}`, parent: actor, name: id.toUpperCase(), system: { quantity },
       _stats: { duplicateSource: `Item.${id}` }, flags: {},
       async delete() { counters.deletes++; actor.items = actor.items.filter(row => row !== this); this.deleted = true; },
@@ -89,13 +93,13 @@ try {
     const systemManager = { getSystem: id => id === 's' ? system : null };
     const resolution = new ResolutionModeService(systemManager);
     const manager = new RecipeManager({ getCraftingSystem: () => system, getCraftingSystemManager: () => systemManager }); manager.recipes.set(recipe.id, recipe);
-    const engine = new CraftingEngine(manager, null, resolution);
+    const engine = new CraftingEngine(manager, runs ? new CraftingRunManager() : null, resolution);
     const sky = emptyData();
     if (configured) { sky.systems.s = emptySystem(); Object.assign(sky.systems.s, { properties: { p: { name: 'Secret property', description: '', essenceId: 'e' } }, components: { a: ['p'], b: ['p'], c: ['p'] } }); }
     globalThis.game = { user: { id: 'gm', isGM: true }, actors: [actor], time: { worldTime: 0 },
       i18n: { localize: key => key, format: key => key }, settings: { get: () => null },
       fabricate: { getCraftingSystemManager: () => systemManager, getRecipeManager: () => manager,
-        getCraftingRunManager: () => null, getResolutionModeService: () => resolution } };
+        getCraftingRunManager: () => engine.craftingRunManager, getResolutionModeService: () => resolution } };
     const game = globalThis.game;
     globalThis.fromUuid = async uuid => uuid.startsWith('Macro.') ? (runtime.macros[uuid] === undefined ? null : { type: 'script', command: runtime.macros[uuid] })
       : { name: uuid, effects: (runtime.effectsByUuid?.[uuid] ?? runtime.effects).map(row => ({ toObject: () => structuredClone(row) })),
@@ -107,7 +111,8 @@ try {
     installCraftAdapter({ engine, getGame: () => game, data: { getSnapshot: () => structuredClone(sky) }, logger: { warn: (...args) => warnings.push(args) } });
     const craft = options => engine.craft(actor, [actor], recipe, null, options);
     const brew = ids => engine.craftAlchemy(actor, [actor], resolveAlchemySubmissions([actor], system.components, ids, 's'), { craftingSystemId: 's' });
-    return { engine, manager, resolution, system, recipe, sky, actor, initialItems, counters, captures, warnings, runtime, craft, brew };
+    const reload = () => { engine.craftingRunManager = new CraftingRunManager(); };
+    return { engine, manager, resolution, system, recipe, sky, actor, initialItems, counters, captures, warnings, runtime, craft, brew, reload, flags, game };
   }
 
   let f = fixture(); rolls = 0;
@@ -339,6 +344,156 @@ try {
   assert.equal(audit(firstResult).strength, 1); assert.equal(audit(secondAttempt).strength, 4);
   assert.notEqual(firstResult.results[0], secondAttempt.results[0]); assert.equal(f.counters.consumes, 2);
 
+  // Real run-manager persistence uses JSON-only flags on every write. FINISH
+  // must work after deleted stacks, cache loss, and a new manager instance.
+  const timed = fixture => {
+    fixture.system.requirements.time.enabled = true;
+    fixture.recipe.timeRequirement = { minutes: 1 };
+  };
+  f = fixture({ runs: true, quantities: [1, 1] }); timed(f); configure(f, { outcomeStrengths: { pass: 3, fail: 0.5 } }); rolls = 0;
+  assert.equal((await f.craft()).disposition, 'timed-start');
+  assert.equal(f.counters.consumes, 1); assert.equal(rolls, 0); assert.equal(f.actor.items.length, 0);
+  let active = f.engine.craftingRunManager.getActiveRuns(f.actor)[0];
+  assert(active.steps[0].skybricate); assert(!JSON.stringify(active.skybricate).includes('Secret'));
+  assert(!JSON.stringify(active.steps[0].skybricate).includes('Secret'));
+  assert.equal((await f.craft()).success, false); assert.equal(rolls, 0); assert.equal(f.counters.consumes, 1);
+  f.reload(); f.game.time.worldTime = 60; await f.engine.craftingRunManager.processWorldTime(60);
+  f.system.essenceDefinitions[0].enabled = false; // START's behaviour gate survives live toggles.
+  f.system.requirements.time.enabled = false; // Already armed gates still resume natively.
+  crafted = await f.craft();
+  assert.equal(crafted.success, true, JSON.stringify(f.warnings)); assert.equal(audit(crafted).strength, 3);
+  assert.equal(audit(crafted).applied[0].sources.length, 2); assert.equal(rolls, 1); assert.equal(f.counters.consumes, 1);
+  assert.equal(f.counters.auditUpdates, 1); assert.equal(f.engine.craftingRunManager.getActiveRuns(f.actor).length, 0);
+
+  f = fixture({ runs: true }); timed(f); f.runtime.macros['Macro.e'] = '';
+  assert.equal((await f.craft()).disposition, 'skybricate-configuration'); assert.equal(f.counters.consumes, 0);
+  assert.equal(f.engine.craftingRunManager.getActiveRuns(f.actor).length, 0);
+  f = fixture({ runs: true }); timed(f);
+  const updateRun = f.engine.craftingRunManager.updateRun;
+  f.engine.craftingRunManager.updateRun = function (actor, run) {
+    if (run.steps[0].skybricate) throw new Error('Provenance persistence refused');
+    return updateRun.call(this, actor, run);
+  };
+  await assert.rejects(f.craft(), /Provenance persistence refused/); assert.equal(f.counters.consumes, 0);
+
+  f = fixture({ runs: true }); timed(f); configure(f, { outcomeStrengths: { pass: 4, fail: 1 } });
+  f.system.essenceDefinitions.push({ id: 'native', propertyMacroUuid: 'Macro.native', sourceComponentId: 'a' });
+  f.system.components[0].essences = { e: 99, native: 2 }; f.system.components[1].essences = { native: 3 };
+  globalThis.__stockMacroProbe = [];
+  f.runtime.macros['Macro.native'] = 'globalThis.__stockMacroProbe.push(["native",context.essenceQuantity]); return {"system.native":context.essenceQuantity};';
+  f.runtime.macros['Macro.e'] = 'globalThis.__stockMacroProbe.push(["sky",context.essenceQuantity]); return {"system.power":context.essenceQuantity};';
+  await f.craft(); f.reload(); f.game.time.worldTime = 60; f.system.essenceDefinitions[1].enabled = false;
+  crafted = await f.craft(); assert.deepEqual(globalThis.__stockMacroProbe, [['native', 5], ['sky', 4]]);
+  assert.equal(crafted.results[0].system.native, 5); assert.equal(audit(crafted).applied.length, 1);
+
+  f = fixture({ runs: true, mode: 'alchemy', quantities: [1, 1, 2] }); timed(f);
+  assert.equal((await f.brew(['a', 'b', 'c', 'c'])).disposition, 'timed-start');
+  assert.equal(f.initialItems[2].system.quantity, 2, 'stock timed START does not spend alchemy extras');
+  f.reload(); f.game.time.worldTime = 60; crafted = await f.craft();
+  assert.deepEqual(audit(crafted).applied[0].sources.map(source => source.componentId), ['a', 'b']);
+
+  f = fixture({ runs: true, mode: 'routedByCheck' }); timed(f); configure(f, { limitByCheck: true,
+    outcomeLimits: { good: 1, bad: 0 }, outcomeStrengths: { good: 2.5, bad: 0.5 } });
+  await f.craft(); f.reload(); f.game.time.worldTime = 60; crafted = await f.craft();
+  assert.equal(audit(crafted).outcomeId, 'good'); assert.equal(audit(crafted).strength, 2.5);
+
+  for (const corrupt of [run => delete run.skybricate, run => delete run.steps[0].skybricate,
+    run => run.steps[0].skybricate.composition[0].componentId = 'b',
+    run => run.steps[0].preparedConsumption.consumedSummary[0].quantity = 9,
+    (run, fixture) => fixture.sky.systems.s.components.a = [],
+    (run, fixture) => configure(fixture, { outcomeStrengths: { pass: 9, fail: 1 } }),
+    (run, fixture) => fixture.system.craftingCheck.simple.dc = 11,
+    (run, fixture) => fixture.recipe.resultGroups[0].results[0].quantity = 2]) {
+    f = fixture({ runs: true }); timed(f); await f.craft();
+    const persisted = f.flags['fabricate.fabricate.craftingRuns'];
+    corrupt(Object.values(persisted.active)[0], f); f.reload(); f.game.time.worldTime = 100; rolls = 0;
+    assert.equal((await f.craft()).disposition, 'skybricate-configuration');
+    assert.equal(rolls, 0); assert.equal(f.counters.consumes, 1); assert.equal(f.counters.creates, 0);
+  }
+
+  const steps = (fixture, { collapsed = false, mixed = false } = {}) => {
+    fixture.system.features.multiStepRecipes = !collapsed;
+    fixture.system.requirements.time.enabled = mixed;
+    const set = fixture.recipe.ingredientSets[0].toJSON();
+    fixture.recipe.steps = [
+      { id: 'first', name: 'First', ingredientSets: [set], resultGroups: fixture.recipe.resultGroups, timeRequirement: mixed ? { minutes: 1 } : null },
+      { id: 'last', name: 'Last', ingredientSets: [set], resultGroups: fixture.recipe.resultGroups, timeRequirement: mixed ? { minutes: 1 } : null }
+    ].map((row, index) => fixture.recipe._normalizeStep(row, index));
+  };
+  for (const collapsed of [false, true]) for (const mixed of [false, true]) {
+    f = fixture({ runs: true, quantities: [3, 3] }); steps(f, { collapsed, mixed }); rolls = 0;
+    if (mixed) {
+      assert.equal((await f.craft()).success, false); assert.equal(rolls, 0);
+      assert.equal(f.counters.consumes, collapsed ? 0 : 1);
+      f.reload(); f.game.time.worldTime = collapsed ? 120 : 60;
+    }
+    crafted = await f.craft();
+    if (!collapsed) {
+      assert.equal(crafted.success, true, JSON.stringify({ message: crafted.message, warnings: f.warnings, collapsed, mixed })); assert.equal(crafted.results.length, 1); assert.equal(f.counters.auditUpdates, 1);
+      f.reload();
+      if (mixed) { assert.equal((await f.craft()).disposition, 'timed-start'); f.reload(); f.game.time.worldTime = 120; }
+      crafted = await f.craft();
+    }
+    assert.equal(crafted.success, true, JSON.stringify(f.warnings)); assert.equal(rolls, 2); assert.equal(f.counters.consumes, 2);
+    assert.equal(f.counters.creates, 2); assert.equal(f.counters.auditUpdates, 2);
+    assert.equal(audit(crafted).applied[0].sources[0].items[0].quantity, 1, 'earlier step consumption is not pooled');
+  }
+  f = fixture({ runs: true, quantities: [3, 3] }); steps(f, { collapsed: true, awardFirst: true });
+  crafted = await f.craft(); assert.equal(crafted.success, true); assert.equal(f.counters.creates, 2); assert.equal(f.counters.auditUpdates, 2);
+  assert.equal(f.actor.items.filter(item => item.flags?.skybricate?.application).length, 2);
+  f = fixture({ runs: true, quantities: [3, 3] }); steps(f); f.runtime.createEmpty = true;
+  crafted = await f.craft(); assert.deepEqual(crafted.results, []); assert.equal(f.counters.auditUpdates, 0);
+  f.runtime.createEmpty = false; crafted = await f.craft(); assert.equal(f.counters.auditUpdates, 1);
+
+  // A cancelled FINISH retains the prepared inputs and can resume, without a
+  // second consume. Failures, effects/chat errors retain native spent inputs.
+  f = fixture({ runs: true }); timed(f); await f.craft(); f.reload(); f.game.time.worldTime = 60;
+  const timedCheck = f.engine._runCraftingCheck;
+  f.engine._runCraftingCheck = async () => ({ success: false, cancelled: true });
+  assert.equal((await f.craft()).cancelled, true); assert.equal(f.counters.consumes, 1); assert.equal(f.counters.auditUpdates, 0);
+  f.engine._runCraftingCheck = timedCheck; f.reload(); crafted = await f.craft(); assert.equal(crafted.success, true); assert.equal(f.counters.consumes, 1);
+  for (const failure of ['rolled', 'creation', 'effect', 'chat']) {
+    f = fixture({ runs: true }); timed(f); await f.craft(); f.reload(); f.game.time.worldTime = 60;
+    if (failure === 'rolled') {
+      rollTotal = 1;
+      crafted = await f.craft(); assert.equal(crafted.success, false); assert.equal(audit(crafted).checkSuccess, false);
+      rollTotal = 17;
+    } else {
+      if (failure === 'creation') f.runtime.createThrows = true;
+      else if (failure === 'effect') f.runtime.effectThrows = true;
+      else f.engine._postCraftChatMessage = async () => { throw new Error('Chat failed'); };
+      await assert.rejects(f.craft()); assert.equal(f.counters.auditUpdates, 0);
+    }
+    assert.equal(f.counters.consumes, 1);
+  }
+
+  // Two independent recipes/runs on the same Actor use their own persisted
+  // sources, gate/check outcomes and strength, including after manager reload.
+  f = fixture({ runs: true, quantities: [3, 3] }); timed(f);
+  const secondRecipe = new Recipe({ ...f.recipe.toJSON(), id: 'second' }); f.manager.recipes.set('second', secondRecipe);
+  configure(f, { outcomeStrengths: { pass: 2, fail: 0.5 } });
+  f.sky.systems.s.recipeRules.second = { ...structuredClone(f.sky.systems.s.recipeRules.recipe), outcomeStrengths: { pass: 7, fail: 1 } };
+  await f.craft(); await f.engine.craft(f.actor, [f.actor], secondRecipe); assert.equal(f.counters.consumes, 2);
+  const runIds = f.engine.craftingRunManager.getActiveRuns(f.actor).map(run => run.id); assert.equal(new Set(runIds).size, 2);
+  f.reload(); f.game.time.worldTime = 60;
+  const secondRun = await f.engine.craft(f.actor, [f.actor], secondRecipe); const firstRun = await f.craft();
+  assert.equal(audit(firstRun).strength, 2); assert.equal(audit(secondRun).strength, 7); assert.equal(f.counters.consumes, 2); assert.equal(f.counters.auditUpdates, 2);
+
+  for (const delayed of [false, true]) {
+    f = fixture({ runs: true, mode: 'progressive' });
+    f.system.craftingCheck.progressive = { rollFormula: '1d20', awardMode: 'equal' };
+    f.system.components.find(row => row.id === 'result').difficulty = 10;
+    f.recipe.resultGroups = [f.recipe.resultGroups[0]]; f.recipe.outcomeRouting = {}; if (delayed) timed(f); rolls = 0;
+    if (delayed) { await f.craft(); assert.equal(rolls, 0); f.reload(); f.game.time.worldTime = 60; }
+    crafted = await f.craft(); assert.equal(crafted.success, true, JSON.stringify({ message: crafted.message, warnings: f.warnings }));
+    assert.equal(audit(crafted).strength, 1); assert.equal(audit(crafted).outcomeId, null); assert.equal(rolls, 1); assert.equal(f.counters.consumes, 1);
+  }
+  f = fixture({ runs: true, mode: 'progressive' });
+  f.system.craftingCheck.progressive = { rollFormula: '1d20', awardMode: 'equal' };
+  f.system.components.find(row => row.id === 'result').difficulty = 100;
+  f.recipe.resultGroups = [f.recipe.resultGroups[0]]; f.recipe.outcomeRouting = {};
+  crafted = await f.craft(); assert.deepEqual(crafted.results, []); assert.equal(f.counters.auditUpdates, 0);
+
   // Verify the underlying STOCK seams separately from the runtime integration:
   // one precomputed selected map drives BOTH paths; a local
   // definitions list controls macro order. Native configuration stays unchanged.
@@ -355,5 +510,5 @@ try {
   await receiver._transferEffects({ createEmbeddedDocuments: async (type, rows) => effects.push(...rows) }, [], f.recipe, selected, undefined, enabled);
   assert.deepEqual(macroCalls, [['e', 2]]); assert.equal(itemData.system.power, 2); assert.equal(effects.length, 1); assert.deepEqual(f.system, before);
   delete globalThis.__stockMacroProbe;
-  console.log('PASS stock 1.9.10: native roll/consume/create chain; outcome strength/count/order, independent essences and linked filtering, numeric IDs, shared macro/effect set and single effect batch, actual consumption and exclusive special extras, no-op/overwritten/partial/error/normalized macros, confirmed/duplicate/disabled effects, feature gates, individual/multiple awards and native plain stacking, deferred audit on failures, concurrent attempts.');
+  console.log('PASS stock 1.9.10: immediate/alchemy 9b regressions; real CraftingRunManager JSON persistence/reload/deleted sources, timed start/wait/world time/finish, ordinary/collapsed/mixed steps, separate awards and spends, snapshot gates/native essences, timed alchemy/routed/progressive, cancellation/retry, exceptions, legacy/corrupt/stale guards, persistence refusal, isolated timed runs and no duplicate audit.');
 } finally { await rm(temp, { recursive: true, force: true }); }

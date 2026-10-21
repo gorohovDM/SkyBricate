@@ -6,6 +6,7 @@ import { DataStore } from '../scripts/data-store.js';
 import { installCraftAdapter, getCraftAttempt } from '../scripts/craft-adapter.js';
 import { mountPropertyPanel } from '../scripts/property-panel.js';
 import { consumedSelection } from '../scripts/craft-application.js';
+import { fingerprint, runRevision, runBinding, validateRun } from '../scripts/craft-run-context.js';
 
 export function craftFixture({ resolveUuid } = {}) {
   const sky = emptyData(), system = { id: 's', name: 'System', resolutionMode: 'simple',
@@ -147,14 +148,53 @@ test('9aAlchemy captures bucketed IDs and extras by native UUID rule; duplicate 
   assert.equal(result.disposition, 'no-match'); assert.equal(f.counters.rolls, rolls);
 });
 
-test('9a rejects configured delayed/multistep/progressive; ordinary crafts preserve native receiver and wrappers', async () => {
-  for (const mutate of [f => f.recipe.getExecutionSteps = () => [{}, {}], f => f.recipe.getExecutionSteps = () => [{ timeRequirement: { value: 1 } }],
-    f => f.system.resolutionMode = 'progressive']) {
+test('9c requires a run manager for delayed/multistep; progressive uses no named outcome and strength one', async () => {
+  for (const mutate of [f => f.recipe.getExecutionSteps = () => [{}, {}], f => f.recipe.getExecutionSteps = () => [{ timeRequirement: { value: 1 } }]]) {
     const f = craftFixture(); mutate(f); assert.equal((await f.craft()).disposition, 'skybricate-configuration'); assert.equal(f.counters.native, 0);
   }
+  const progressive = craftFixture(); progressive.system.resolutionMode = 'progressive';
+  await progressive.craft(); assert.equal(progressive.captures[0].strength, 1); assert.equal(progressive.captures[0].outcomeId, null);
   const f = craftFixture(); f.sky = emptyData();
   await f.craft(); assert.equal(f.counters.native, 1); assert.equal(f.captures[0], null);
   const wrapper = f.engine.craft = () => 'other-wrapper'; f.dispose(); assert.equal(f.engine.craft, wrapper);
+});
+
+test('9c JSON run provenance binds actor/recipe/configuration and rejects legacy, corrupt or mismatched prepared data', () => {
+  const f = craftFixture(), revision = runRevision(f.system, f.sky.systems.s, f.recipe);
+  const run = { id: 'run', status: 'waitingTime', actorUuid: f.actor.uuid, recipeId: f.recipe.id, craftingSystemId: 's', currentStepIndex: 0,
+    steps: [{ stepId: 'step', status: 'waitingTime', timeGate: { availableAt: 60 }, preparedConsumption: {
+      selectedIngredientSetId: 'set', currencySpends: [], resolvedEssences: {}, essenceEnabled: {},
+      consumedSummary: [{ itemUuid: f.a.uuid, actorUuid: f.actor.uuid, quantity: 1 }]
+    } }] };
+  const binding = runBinding(f.actor, f.recipe, revision, run); run.skybricate = binding;
+  const composition = [{ componentId: 'a', itemUuid: f.a.uuid, actorUuid: f.actor.uuid, quantity: 1, kind: 'ingredient' }];
+  const essenceEnabled = { e: true };
+  run.steps[0].skybricate = { index: 0, stepId: 'step', composition, essenceEnabled,
+    digest: fingerprint([composition, essenceEnabled]), prepared: fingerprint(run.steps[0].preparedConsumption) };
+  const serialized = JSON.parse(JSON.stringify(run));
+  assert.deepEqual(validateRun(serialized, binding, f.system).composition, composition);
+  for (const mutate of [row => delete row.skybricate, row => row.actorUuid = 'Actor.other',
+    row => row.steps[0].skybricate.composition[0].componentId = 'b', row => row.steps[0].preparedConsumption.consumedSummary[0].quantity = 2,
+    row => delete row.steps[0].skybricate, row => row.currentStepIndex = 1]) {
+    const corrupt = structuredClone(serialized); mutate(corrupt);
+    assert.throws(() => validateRun(corrupt, binding, f.system));
+  }
+  const changed = structuredClone(binding); changed.revision = 'stale';
+  assert.throws(() => validateRun(serialized, changed, f.system));
+  f.system.essenceDefinitions[0].enabled = false;
+  assert.equal(runRevision(f.system, f.sky.systems.s, f.recipe), revision);
+  f.sky.systems.s.components.a = [];
+  assert.notEqual(runRevision(f.system, f.sky.systems.s, f.recipe), revision);
+  assert(!JSON.stringify(run.skybricate).includes('Secret')); assert(!JSON.stringify(run.steps[0].skybricate).includes('Hidden'));
+});
+
+test('9c progressive rejects outcome limits before native roll and keeps strength one with empty strength map', async () => {
+  const f = craftFixture(); f.system.resolutionMode = 'progressive';
+  f.sky.systems.s.recipeRules.r = { allowedPropertyIds: ['p'], propertyOrder: [], prioritySpecial: false,
+    limitByCheck: true, outcomeLimits: {} };
+  assert.equal((await f.craft()).disposition, 'skybricate-configuration'); assert.equal(f.counters.rolls, 0);
+  f.sky.systems.s.recipeRules.r.limitByCheck = false; f.sky.systems.s.recipeRules.r.outcomeStrengths = {};
+  await f.craft(); assert.equal(f.captures[0].strength, 1); assert.equal(f.captures[0].outcomeId, null);
 });
 
 test('9a concurrent attempts snapshot assignments/checks independently without shared current state', async () => {
