@@ -1,6 +1,7 @@
 import { copy, assertKey } from './data-model.js';
 import { selectProperties } from './property-selection.js';
-import { recipeOutcomes, validateOutcomeLimits } from './recipe-contract.js';
+import { recipeOutcomes, validateOutcomeLimits, outcomeStrength } from './recipe-contract.js';
+import { installResultApplication } from './craft-application.js';
 import { persistedSystems } from './assignment-contract.js';
 
 // Private module context, never attached to Items, runs, chat, hooks or module.api.
@@ -161,8 +162,9 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
           : ['pass', 'fail'].includes(check.outcome) ? check.outcome : null;
         if (rules.limitByCheck && !recipeOutcomes(system).some(row => row.id === outcomeId)) throw new Error('Unknown check outcome ID');
         const selected = selectProperties({ system: sky, componentIds: rows.map(row => row.componentId).filter(Boolean), recipeRules: rules, outcome: outcomeId });
+        const strength = outcomeStrength(rules, recipeOutcomes(system), outcomeId);
         attempts.set(scope, { craftingSystemId: recipe.craftingSystemId, recipeId: recipe.id,
-          actorUuid: actor.uuid, composition: copy(rows), checkResult: copy(check), outcomeId,
+          actorUuid: actor.uuid, composition: copy(rows), checkResult: copy(check), outcomeId, strength,
           selected: selected.map(property => ({ ...property, essenceId: links.find(link => link.propertyId === property.propertyId).essenceId })) });
       } catch (error) {
         reject(error);
@@ -170,8 +172,9 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
       }
       return check;
     };
+    const finalize = installResultApplication(scope, { system, sky, attempt: () => attempts.get(scope), resolveUuid });
     // Native failures after consumption propagate; there is no fabricated rollback.
-    try { return await nativeCraft.apply(scope, args); }
+    try { const result = await nativeCraft.apply(scope, args); await finalize(result); return result; }
     finally { attempts.delete(scope); }
   }
   const craft = function (...args) { return execute(this, args); };

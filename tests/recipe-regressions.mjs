@@ -48,15 +48,15 @@ test('recipe allowlist filters before shared limit; absence preserves legacy, em
   for (const allowedPropertyIds of [['missing'], ['p1', 'p1'], null, {}]) assert.throws(() => select({ allowedPropertyIds }));
 });
 
-test('schema 4 migration preserves knowledge and assignments without writes; only successful recipe save persists schema 6', async () => {
+test('schema 4 migration preserves knowledge and assignments without writes; only successful recipe save persists schema 7', async () => {
   const f = await fixture(); await f.data.setPropertyKnowledge('actor', 'a', 'c', 'p1', true);
   const old = f.stored; old.schemaVersion = 4; for (const system of Object.values(old.systems)) delete system.recipeRules;
   f.stored = old; const writes = f.writes, snapshot = f.data.getSnapshot();
-  assert.equal(snapshot.schemaVersion, 6); assert.deepEqual(snapshot.knowledge, old.knowledge); assert.deepEqual(snapshot.systems.a.recipeRules, {});
+  assert.equal(snapshot.schemaVersion, 7); assert.deepEqual(snapshot.knowledge, old.knowledge); assert.deepEqual(snapshot.systems.a.recipeRules, {});
   assert.deepEqual(f.stored, old); assert.equal(f.writes, writes);
   f.reject = true; await assert.rejects(f.data.configureRecipeRules('a', 'a1', rules(['p1']))); assert.deepEqual(f.stored, old);
   f.reject = false; await f.data.configureRecipeRules('a', 'a1', rules(['p1']));
-  assert.equal(f.stored.schemaVersion, 6); assert.deepEqual(f.stored.knowledge, old.knowledge);
+  assert.equal(f.stored.schemaVersion, 7); assert.deepEqual(f.stored.knowledge, old.knowledge);
   for (const mutate of [v => v.systems.a.recipeRules.a1.extra = 1,
     v => v.systems.a.recipeRules.a1.allowedPropertyIds = ['missing'],
     v => v.systems.a.recipeRules.a1.outcomeLimits = { pass: -1 }]) {
@@ -147,7 +147,7 @@ test('recipe panel orders and saves exact recipe separately, persists zero, relo
   action('add').click(); action('add').click(); action('down').click();
   toggle('LimitByCheck').checked = true; toggle('PrioritySpecial').checked = true;
   action('save').click(); await settle();
-  assert.deepEqual(f.stored.systems.a.recipeRules.a1, { ...rules(['p2', 'p1']), limitByCheck: true, prioritySpecial: true, outcomeLimits: { fail: 0, pass: 0 } });
+  assert.deepEqual(f.stored.systems.a.recipeRules.a1, { ...rules(['p2', 'p1']), limitByCheck: true, prioritySpecial: true, outcomeLimits: { fail: 0, pass: 0 }, outcomeStrengths: { fail: 1, pass: 1 } });
   assert.equal(f.stored.systems.a.recipeRules.a2, undefined);
   panel.reload(); assert.equal(toggle('PrioritySpecial').checked, true);
   const input = target.querySelector('[data-sky-outcome="pass"]'); input.value = '1.5'; const before = f.stored;
@@ -157,6 +157,43 @@ test('recipe panel orders and saves exact recipe separately, persists zero, relo
   action('reload').click(); while (action('remove')) action('remove').click(); action('save').click(); await settle();
   assert.deepEqual(f.stored.systems.a.recipeRules.a1.allowedPropertyIds, []);
   allowed = false; action('add').click(); action('save').click(); await settle(); assert.deepEqual(f.stored.systems.a.recipeRules.a1.allowedPropertyIds, []);
+});
+
+test('schema7 reads schema6 losslessly and outcome strength is separate, exact and positive', async () => {
+  const f = await fixture(); await f.data.configureRecipeRules('a', 'a1', rules(['p1']));
+  const old = f.stored; old.schemaVersion = 6; f.stored = old;
+  const migrated = f.data.getSnapshot(); assert.equal(migrated.schemaVersion, 7);
+  assert.deepEqual(migrated.systems, old.systems); assert.deepEqual(f.stored, old);
+  const strengths = { fail: 0.25, pass: 4.5 };
+  await f.data.configureRecipeRules('a', 'a1', { ...rules(['p1']), outcomeStrengths: strengths });
+  assert.equal(f.stored.schemaVersion, 7); assert.equal(f.stored.systems.a.recipeRules.a1.limitByCheck, false);
+  assert.deepEqual(f.stored.systems.a.recipeRules.a1.outcomeStrengths, strengths);
+  for (const outcomeStrengths of [{}, { pass: 1 }, { pass: 1, fail: 1, extra: 2 }, ...[0, -1, Infinity, NaN, '2', null].map(value => ({ pass: value, fail: 1 }))]) {
+    await assert.rejects(f.data.configureRecipeRules('a', 'a1', { ...rules(['p1']), outcomeStrengths }));
+  }
+  const wrongVersion = structuredClone(old); wrongVersion.systems.a.recipeRules.a1.outcomeStrengths = strengths;
+  assert.throws(() => readData(wrongVersion));
+  f.systems[0].craftingCheck.enabled = false;
+  await assert.rejects(f.data.configureRecipeRules('a', 'a1', { ...rules(['p1']), outcomeStrengths: strengths }));
+  await f.data.configureRecipeRules('a', 'a1', { ...rules(['p1']), outcomeStrengths: {} });
+});
+
+test('GM strength inputs remain editable with count limit off; invalid and changed outcomes require correction/reload', async t => {
+  const f = await fixture(), window = new Window(), target = window.document.createElement('div'); window.document.body.append(target);
+  const panel = mountRecipePanel({ target, getGame: () => f.game, data: f.data, systemId: 'a', recipeId: 'a1', canWrite: () => true, text: key => key });
+  t.after(() => { panel.dispose(); window.happyDOM.abort(); });
+  const save = () => target.querySelector('[data-sky-recipe-action="save"]').click();
+  const strength = outcome => target.querySelector(`[data-sky-strength="${outcome}"]`);
+  assert.equal(strength('pass').value, '1'); assert.equal(strength('pass').disabled, false);
+  assert.equal(target.querySelector('[data-sky-outcome="pass"]').disabled, true);
+  strength('pass').value = '2.5'; strength('fail').value = '0.25'; save(); await settle();
+  assert.deepEqual(f.stored.systems.a.recipeRules.a1.outcomeStrengths, { fail: 0.25, pass: 2.5 });
+  const before = f.stored; strength('pass').value = '0'; save(); await settle();
+  assert.deepEqual(f.stored, before); assert.match(target.textContent, /InvalidStrength/);
+  strength('pass').value = '3'; f.systems[0].craftingCheck.enabled = false; save(); await settle();
+  assert.deepEqual(f.stored, before); assert.match(target.textContent, /changed/);
+  panel.reload(); assert.equal(strength('pass'), null); assert.match(target.textContent, /NoOutcomes/);
+  save(); await settle(); assert.deepEqual(f.stored.systems.a.recipeRules.a1.outcomeStrengths, {});
 });
 
 test('row adapter binds IDs, rejects changed system/stale rows, avoids duplicates, cleans up deleted recipes', async t => {

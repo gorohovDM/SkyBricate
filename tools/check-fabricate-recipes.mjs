@@ -97,8 +97,13 @@ try {
   assert(button(created.id)); assert(button(second.id));
   button(created.id).click(); await settle(); assert.deepEqual(opens.at(-1), ['a', created.id]);
   const count = nativeWrites;
-  rulesTarget.querySelector('[data-sky-recipe-action="add"]').click(); rulesTarget.querySelector('[data-sky-recipe-action="save"]').click();
+  rulesTarget.querySelector('[data-sky-recipe-action="add"]').click();
+  const strength = rulesTarget.querySelector('[data-sky-strength="pass"]'); assert(strength); assert.equal(strength.disabled, false);
+  strength.value = '2.5'; rulesTarget.querySelector('[data-sky-strength="fail"]').value = '0.5';
+  rulesTarget.querySelector('[data-sky-recipe-action="save"]').click();
   await settle(); assert.deepEqual(sky.systems.a.recipeRules[created.id].allowedPropertyIds, ['property']); assert.equal(nativeWrites, count);
+  assert.deepEqual(sky.systems.a.recipeRules[created.id].outcomeStrengths, { fail: 0.5, pass: 2.5 });
+  assert.equal(sky.systems.a.recipeRules[created.id].limitByCheck, false); assert.equal(sky.schemaVersion, 7);
   assert.equal(sky.systems.a.recipeRules[second.id], undefined);
   hooks.fire('renderApplicationV2', app, root); await settle(); assert.equal(root.querySelectorAll('[data-skybricate-recipe]').length, 2);
   // Native editor still receives the row ID and stages its own draft independently.
@@ -121,7 +126,7 @@ try {
   const routed = await runFormulaRouted({ formula: '', dc: 0, type: 'relative', relativeOutcomes: [{ id: 'tier', name: 'Display name', dc: 0, success: true }] });
   assert.equal(routed.outcome, 'Display name'); assert.equal(routed.data.outcomeId, 'tier');
   assert.deepEqual(warnings, []);
-  console.log('PASS stock 1.9.10: saved disabled recipe IDs, real mounted recipe rows/editor, exact rule identity/isolation, separate save, native draft/save, repeated render/system switch, pass/fail and routed outcome IDs.');
+  console.log('PASS stock 1.9.10: saved disabled recipe IDs, real mounted recipe rows/editor, exact rule identity/isolation, separate strength/count fields and schema7 save, native draft/save, repeated render/system switch, pass/fail and routed outcome IDs.');
 } finally {
   dispose(); panel?.dispose(); if (component) await unmount(component); window.happyDOM.abort(); await rm(temp, { recursive: true, force: true });
 }

@@ -5,6 +5,7 @@ import { emptyData, emptySystem, readData, validateData } from '../scripts/data-
 import { DataStore } from '../scripts/data-store.js';
 import { installCraftAdapter, getCraftAttempt } from '../scripts/craft-adapter.js';
 import { mountPropertyPanel } from '../scripts/property-panel.js';
+import { consumedSelection } from '../scripts/craft-application.js';
 
 export function craftFixture({ resolveUuid } = {}) {
   const sky = emptyData(), system = { id: 's', name: 'System', resolutionMode: 'simple',
@@ -54,6 +55,36 @@ export function craftFixture({ resolveUuid } = {}) {
     get sky() { return stored; }, set sky(value) { stored = value; }, set check(value) { check = value; },
     craft: options => engine.craft(actor, [actor], recipe, null, options) };
 }
+
+test('9b strength uses native stable outcome without reroll; no-check ignores a stock pass marker', async () => {
+  const f = craftFixture();
+  f.sky.systems.s.recipeRules.r = { allowedPropertyIds: ['p'], propertyOrder: [], prioritySpecial: false, limitByCheck: false,
+    outcomeLimits: {}, outcomeStrengths: { pass: 2.5, fail: 0.25 } };
+  await f.craft(); assert.equal(f.captures[0].strength, 2.5); assert.equal(f.counters.rolls, 1);
+  f.check = { success: false, outcome: 'fail' }; await f.craft(); assert.equal(f.captures[1].strength, 0.25);
+  f.check = { success: true, outcome: 'unknown' }; assert.equal((await f.craft()).misconfigured, true);
+  assert.equal(f.counters.consumes, 2); assert.equal(f.counters.rolls, 3);
+  f.system.craftingCheck.enabled = false; f.sky.systems.s.recipeRules.r.outcomeStrengths = {};
+  f.check = { success: true, outcome: 'pass' }; await f.craft(); assert.equal(f.captures[2].strength, 1);
+  f.system.craftingCheck.enabled = true; f.sky.systems.s.recipeRules.r.outcomeStrengths = { pass: 0, fail: 1 };
+  const rolls = f.counters.rolls; assert.equal((await f.craft()).success, false); assert.equal(f.counters.rolls, rolls);
+});
+
+test('9b consumed provenance excludes planned-but-unspent, unknown/overdrawn UUIDs and preserves exclusive special sources', () => {
+  const composition = ['a', 'b', 'c'].map(componentId => ({ componentId, itemUuid: componentId, actorUuid: 'actor', quantity: 2, kind: componentId === 'c' ? 'extra' : 'ingredient' }));
+  const ordinary = { propertyId: 'p', essenceId: 'e', selectionType: 'matched', sources: ['a', 'b'].map(componentId => ({ componentId, assignmentType: 'ordinary' })) };
+  const special = { ...ordinary, selectionType: 'special', sources: [{ componentId: 'c', assignmentType: 'special' }] };
+  const spent = (...pairs) => pairs.map(([uuid, quantity]) => ({ item: { uuid }, quantity }));
+  assert.deepEqual(consumedSelection({ composition, selected: [ordinary] }, spent(['a', 1])), []);
+  assert.deepEqual(consumedSelection({ composition, selected: [ordinary] }, spent(['a', 1], ['unknown', 2])), []);
+  assert.deepEqual(consumedSelection({ composition, selected: [ordinary] }, spent(['a', 3], ['b', 1])), []);
+  const selected = consumedSelection({ composition, selected: [special] }, spent(['a', 1], ['b', 1], ['c', 2]));
+  assert.deepEqual(selected[0].sources, [{ componentId: 'c', assignmentType: 'special', items: [{ itemUuid: 'c', actorUuid: 'actor', quantity: 2, kind: 'extra' }] }]);
+  assert.deepEqual(consumedSelection({ composition, selected: [special] }, spent(['a', 1], ['b', 1])), []);
+  const duplicatePlan = [...composition, { ...composition[0], quantity: 1 }];
+  const actual = consumedSelection({ composition: duplicatePlan, selected: [ordinary] }, spent(['a', 2], ['b', 1]));
+  assert.equal(actual[0].sources[0].items.length, 1); assert.equal(actual[0].sources[0].items[0].quantity, 2);
+});
 
 test('9a captures a native check and pre-consumption composition; provenance stays private, detached and per attempt', async () => {
   const f = craftFixture();
@@ -150,9 +181,9 @@ test('schema6 keeps schema5 rules/knowledge and private links validate IDs/uniqu
   const f = craftFixture(); const old = structuredClone(f.sky); old.schemaVersion = 5; delete old.systems.s.properties.p.essenceId;
   old.systems.s.recipeRules.r = { allowedPropertyIds: ['p'], propertyOrder: ['p'], limitByCheck: false, outcomeLimits: {}, prioritySpecial: false };
   f.sky = old;
-  const migrated = f.data.getSnapshot(); assert.equal(migrated.schemaVersion, 6);
+  const migrated = f.data.getSnapshot(); assert.equal(migrated.schemaVersion, 7);
   assert.deepEqual(migrated.systems.s.recipeRules, old.systems.s.recipeRules); assert.deepEqual(f.sky, old);
-  await f.data.updateProperty('s', 'p', { essenceId: 'e' }); assert.equal(f.sky.schemaVersion, 6);
+  await f.data.updateProperty('s', 'p', { essenceId: 'e' }); assert.equal(f.sky.schemaVersion, 7);
   await assert.rejects(f.data.createProperty('s', { name: 'Duplicate', essenceId: 'e' }));
   await assert.rejects(f.data.updateProperty('s', 'p', { essenceId: 'missing' }));
   await f.data.updateProperty('s', 'p', { essenceId: null }); assert.equal(f.sky.systems.s.properties.p.essenceId, undefined);
