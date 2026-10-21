@@ -7,6 +7,7 @@ import { createRecipeApplication } from './recipe-adapter.js';
 
 import { selectProperties } from './property-selection.js';
 import { installCraftAdapter } from './craft-adapter.js';
+import { installCraftDiscovery } from './craft-discovery.js';
 
 export const MODULE_ID = "skybricate";
 export const FABRICATE_VERSION = "1.9.10";
@@ -51,6 +52,7 @@ export function installLifecycle({ hooks, getGame, notifications, logger = conso
       if (problem) return fail(problem);
       const module = getGame().modules.get(MODULE_ID);
       data = new DataStore({ getGame });
+      installCraftDiscovery({ hooks, getGame, data, logger });
       installCraftAdapter({ engine: fabricate.getCraftingEngine(), getGame, data, logger });
       installPlayerProvider({ getGame, data, hooks, compatible: () => checkCompatibility(getGame()) === null });
       const openAssignments = () => {

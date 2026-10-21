@@ -14,6 +14,7 @@ import "./player-regressions.mjs";
 import "./selection-regressions.mjs";
 import "./recipe-regressions.mjs";
 import "./craft-regressions.mjs";
+import "./discovery-regressions.mjs";
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function fixture({ getApplicationV2 } = {}) {
@@ -113,7 +114,7 @@ test("release ZIP is reproducible, exact allowlist and manifest paths exist", as
   const out = await mkdtemp(resolve(tmpdir(), "skybricate-build-")); t.after(() => rm(out, { recursive: true, force: true }));
   const first = await build({ out }); const second = await build({ out }); assert.deepEqual(first.archive, second.archive);
   const entries = unzipStored(await readFile(resolve(out, "skybricate.zip")));
-  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/craft-adapter.js", "scripts/craft-application.js", "scripts/craft-run-context.js", "scripts/property-selection.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "scripts/player-panel.js", "scripts/player-provider.js", "scripts/recipe-contract.js", "scripts/recipe-panel.js", "scripts/recipe-adapter.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
+  assert.deepEqual([...entries.keys()], ["module.json", "scripts/main.js", "scripts/craft-adapter.js", "scripts/craft-application.js", "scripts/craft-discovery.js", "scripts/craft-run-context.js", "scripts/property-selection.js", "scripts/data-model.js", "scripts/data-store.js", "scripts/manager-adapter.js", "scripts/property-panel.js", "scripts/assignment-contract.js", "scripts/assignment-panel.js", "scripts/assignment-adapter.js", "scripts/knowledge-panel.js", "scripts/knowledge-adapter.js", "scripts/player-panel.js", "scripts/player-provider.js", "scripts/recipe-contract.js", "scripts/recipe-panel.js", "scripts/recipe-adapter.js", "styles/skybricate.css", "lang/en.json", "lang/ru.json"]);
   for (const [path, data] of entries) assert.deepEqual(data, await readFile(resolve(ROOT, path)));
   const manifest = JSON.parse(entries.get("module.json"));
   assert.deepEqual(await readFile(resolve(out, "module.json")), entries.get("module.json"));
