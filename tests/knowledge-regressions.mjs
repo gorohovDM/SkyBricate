@@ -79,8 +79,8 @@ test('schema 2/3 migrate losslessly only on successful write; corrupt/future kno
     const f=await fixture();if(version===3)await f.data.setComponentAssignments('a','c',{ordinary:[],special:['p']},{editSpecial:true});
     const old=f.snapshot;old.schemaVersion=version;delete old.knowledge; for(const system of Object.values(old.systems)) delete system.recipeRules;
     if(version===2)for(const system of Object.values(old.systems))delete system.specialComponents;
-    f.replace(old);const expectedSystems=f.data.getSnapshot().systems;const writes=f.writes;assert.equal(f.data.getSnapshot().schemaVersion,6);assert.equal(f.writes,writes);assert.deepEqual(f.snapshot,old);
-    f.reject=true;await assert.rejects(set(f));assert.deepEqual(f.snapshot,old);f.reject=false;await set(f);assert.equal(f.snapshot.schemaVersion,6);
+    f.replace(old);const expectedSystems=f.data.getSnapshot().systems;const writes=f.writes;assert.equal(f.data.getSnapshot().schemaVersion,7);assert.equal(f.writes,writes);assert.deepEqual(f.snapshot,old);
+    f.reject=true;await assert.rejects(set(f));assert.deepEqual(f.snapshot,old);f.reject=false;await set(f);assert.equal(f.snapshot.schemaVersion,7);
     assert.deepEqual(f.snapshot.systems,expectedSystems);assert.deepEqual(known(f),['p']);
   }
   for(const mutate of [v=>v.schemaVersion=99,v=>v.knowledge={actor:{a:{c:['missing']}}},v=>v.knowledge={actor:{a:{c:['p','p']}}},v=>v.extra=true]){

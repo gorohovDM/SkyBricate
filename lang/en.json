@@ -104,8 +104,8 @@
       "Unconfigured": "No recipe rules saved yet: legacy selection remains active. Saving creates an explicit allowed list, including an empty list.",
       "PrioritySpecial": "Prioritize special assignments",
       "LimitByCheck": "Limit property count by check outcome",
-      "OutcomeHint": "One shared maximum of distinct properties per native outcome; 0 allows none.",
-      "NoOutcomes": "No stable check outcomes are available: check disabled, missing/legacy formula, no-check mode or progressive. Turn off the count limit.",
+      "OutcomeHint": "One shared maximum of distinct properties per native outcome; 0 allows none. Strength sets essenceQuantity for each selected property, not the number of properties. Default: 1.",
+      "NoOutcomes": "No stable check outcomes are available: turn off the count limit. Without a check, each property has strength 1, regardless of ingredient quantity.",
       "Success": "Success",
       "Failure": "Failure",
       "Add": "Add property",
@@ -118,7 +118,9 @@
       "Saving": "Saving…",
       "Saved": "Recipe rules saved.",
       "InvalidLimit": "Enter a non-negative safe integer for every outcome.",
-      "Unavailable": "This window lost its manager context or GM access. Reopen rules from the recipe row."
+      "Unavailable": "This window lost its manager context or GM access. Reopen rules from the recipe row.",
+      "Strength": "Strength of each property (independent of count limit)",
+      "InvalidStrength": "Enter a positive finite strength for every outcome."
     }
   }
 }

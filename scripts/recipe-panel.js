@@ -33,7 +33,7 @@ export function mountRecipePanel({ target, getGame, data, systemId, recipeId, ca
     reload.disabled = pending || !live();
     add.disabled = !Object.keys(properties).some(id => !order.includes(id));
     save.disabled = limited.checked && !context?.outcomes.length;
-    for (const input of limits.querySelectorAll('input')) input.disabled = !limited.checked;
+    for (const input of limits.querySelectorAll('[data-sky-outcome]')) input.disabled = !limited.checked;
   }
   function renderRows() {
     rows.replaceChildren();
@@ -75,6 +75,9 @@ export function mountRecipePanel({ target, getGame, data, systemId, recipeId, ca
         const input = el('input', undefined, label); input.type = 'number'; input.min = '0'; input.step = '1';
         input.max = String(Number.MAX_SAFE_INTEGER); input.dataset.skyOutcome = outcome.id;
         input.value = Object.hasOwn(rules.outcomeLimits, outcome.id) ? String(rules.outcomeLimits[outcome.id]) : '0';
+        const strengthLabel = el('label', `${text('Strength')} — ${name} [${outcome.id}]`, limits);
+        const strength = el('input', undefined, strengthLabel); strength.type = 'number'; strength.min = '0'; strength.step = 'any';
+        strength.dataset.skyStrength = outcome.id; strength.value = String(rules.outcomeStrengths?.[outcome.id] ?? 1);
       }
       outcomeHint.textContent = text(context.outcomes.length ? 'OutcomeHint' : 'NoOutcomes');
       renderRows(); message.textContent = '';
@@ -115,14 +118,19 @@ export function mountRecipePanel({ target, getGame, data, systemId, recipeId, ca
         renderRows(); return;
       }
       if (node !== save) return;
-      const outcomeLimits = {};
-      for (const input of limits.querySelectorAll('input')) {
+      const outcomeLimits = {}, outcomeStrengths = {};
+      for (const input of limits.querySelectorAll('[data-sky-outcome]')) {
         if (!/^\d+$/.test(input.value) || !Number.isSafeInteger(Number(input.value))) throw new Error(text('InvalidLimit'));
         outcomeLimits[input.dataset.skyOutcome] = Number(input.value);
       }
+      for (const input of limits.querySelectorAll('[data-sky-strength]')) {
+        const strength = Number(input.value);
+        if (!Number.isFinite(strength) || strength <= 0) throw new Error(text('InvalidStrength'));
+        outcomeStrengths[input.dataset.skyStrength] = strength;
+      }
       pending = true; state(); panel.setAttribute('aria-busy', 'true'); message.textContent = text('Saving');
       await data.configureRecipeRules(systemId, recipeId, { allowedPropertyIds: [...order], propertyOrder: [...order],
-        prioritySpecial: priority.checked, limitByCheck: limited.checked, outcomeLimits }, {
+        prioritySpecial: priority.checked, limitByCheck: limited.checked, outcomeLimits, outcomeStrengths }, {
         canWrite: live, expectedRules: baseline, expectedContext: context.revision
       });
       if (live()) { load(); message.textContent = text('Saved'); }

@@ -31,7 +31,7 @@ export function selectProperties(input) {
   }
   if (!Array.isArray(componentIds)) throw new Error('Component IDs must be an array');
   for (const id of componentIds) assertKey(id);
-  assertFields(recipeRules, ['limitByCheck', 'outcomeLimits', 'prioritySpecial', 'propertyOrder', 'allowedPropertyIds']);
+  assertFields(recipeRules, ['limitByCheck', 'outcomeLimits', 'prioritySpecial', 'propertyOrder', 'allowedPropertyIds', 'outcomeStrengths']);
   const { limitByCheck = false, outcomeLimits = {}, prioritySpecial = false, propertyOrder = [] } = recipeRules;
   if (typeof limitByCheck !== 'boolean' || typeof prioritySpecial !== 'boolean') throw new Error('Rule toggles must be boolean');
   record(outcomeLimits);

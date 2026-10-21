@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 export const copy = value => structuredClone(value);
 
@@ -40,14 +40,22 @@ export function emptyRecipeRules() {
   return { allowedPropertyIds: [], propertyOrder: [], limitByCheck: false, outcomeLimits: {}, prioritySpecial: false };
 }
 
-export function validateRecipeRules(system, rules) {
-  exactFields(rules, Object.keys(emptyRecipeRules()));
+export function validateRecipeRules(system, rules, version = SCHEMA_VERSION) {
+  const fields = Object.keys(emptyRecipeRules());
+  assertFields(rules, [...fields, ...(version >= 7 ? ['outcomeStrengths'] : [])]);
+  if (fields.some(key => !Object.hasOwn(rules, key))) throw new Error('Missing required field');
   references(system, rules.allowedPropertyIds);
   references(system, rules.propertyOrder);
   if (rules.propertyOrder.some(id => !rules.allowedPropertyIds.includes(id))) throw new Error('Order requires an allowed property');
   if (typeof rules.limitByCheck !== 'boolean' || typeof rules.prioritySpecial !== 'boolean') throw new Error('Rule toggles must be boolean');
   record(rules.outcomeLimits);
   for (const value of Object.values(rules.outcomeLimits)) limit(value);
+  if (Object.hasOwn(rules, 'outcomeStrengths')) {
+    record(rules.outcomeStrengths);
+    for (const value of Object.values(rules.outcomeStrengths)) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) throw new Error('Strength must be a positive finite number');
+    }
+  }
   return rules;
 }
 
@@ -112,7 +120,7 @@ function validateShape(data, version) {
     references(catalog, rules.propertyOrder);
     if (version >= 5) {
       record(system.recipeRules);
-      for (const recipeRules of Object.values(system.recipeRules)) validateRecipeRules(system, recipeRules);
+      for (const recipeRules of Object.values(system.recipeRules)) validateRecipeRules(system, recipeRules, version);
     }
   }
   if (version >= 4) {
@@ -136,7 +144,7 @@ function validateShape(data, version) {
 
 // Old valid schemas are read losslessly; migration persists only on a successful write.
 export function readData(stored) {
-  if (![2, 3, 4, 5].includes(stored?.schemaVersion)) return copy(validateData(stored));
+  if (![2, 3, 4, 5, 6].includes(stored?.schemaVersion)) return copy(validateData(stored));
   validateShape(stored, stored.schemaVersion);
   const data = copy(stored);
   data.schemaVersion = SCHEMA_VERSION;

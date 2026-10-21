@@ -68,11 +68,25 @@ export function recipeContext(game, systemId, recipeId) {
 }
 
 export function validateOutcomeLimits(rules, outcomes) {
-  if (!rules.limitByCheck) return;
   const ids = outcomes.map(row => row.id);
+  if (Object.hasOwn(rules, 'outcomeStrengths')) {
+    const map = rules.outcomeStrengths;
+    record(map);
+    if (ids.some(id => !Object.hasOwn(map, id)) || Object.keys(map).some(id => !ids.includes(id))
+      || Object.values(map).some(value => typeof value !== 'number' || !Number.isFinite(value) || value <= 0)) {
+      throw new Error('Configure a positive finite strength for every current native outcome');
+    }
+  }
+  if (!rules.limitByCheck) return;
   if (!ids.length) throw new Error('This check has no stable named outcomes; disable the limit');
   if (ids.some(id => !Object.hasOwn(rules.outcomeLimits, id))
     || Object.keys(rules.outcomeLimits).some(id => !ids.includes(id))) {
     throw new Error('Configure a limit for every current native outcome');
   }
+}
+
+export function outcomeStrength(rules, outcomes, outcomeId) {
+  if (!outcomes.length) return 1;
+  if (!outcomes.some(row => row.id === outcomeId)) throw new Error('Unknown check outcome ID');
+  return rules.outcomeStrengths?.[outcomeId] ?? 1;
 }
