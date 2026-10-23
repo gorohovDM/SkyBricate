@@ -1,5 +1,8 @@
 import { assertKey, copy } from './data-model.js';
 
+const discoveryOnly = audit => audit?.discoveryVersion === 2 && audit.transfer === false;
+const supportedAudit = audit => audit?.discoveryVersion === 1 || discoveryOnly(audit);
+
 export const isActiveGM = game => game.user?.isGM === true && !!game.user.id
   && game.users?.activeGM?.id === game.user.id;
 
@@ -9,19 +12,22 @@ export function discoveryContext(game, item) {
   const actor = item?.parent, audit = item?.flags?.skybricate?.application;
   if (!actor?.id || game.actors?.get(actor.id) !== actor
     || !Array.from(actor.items ?? []).includes(item) || !item.uuid
-    || audit?.version !== 1 || audit.discoveryVersion !== 1 || audit.itemUuid !== item.uuid
+    || audit?.version !== 1 || !supportedAudit(audit) || audit.itemUuid !== item.uuid
     || audit.actorUuid !== actor.uuid || audit.craftSuccess !== true
-    || !Array.isArray(audit.applied)) return null;
+    || !Array.isArray(discoveryOnly(audit) ? audit.selected : audit.applied)) return null;
   [actor.id, audit.craftingSystemId, audit.recipeId].forEach(assertKey);
   return { actorId: actor.id, audit: copy(audit) };
 }
 
 export function discoverySources(audit, system, present) {
   const pairs = new Map();
-  for (const property of audit.applied) {
-    assertKey(property.propertyId); assertKey(property.essenceId);
-    if (!(property.macro === true || property.effects === true)
-      || system?.properties[property.propertyId]?.essenceId !== property.essenceId
+  const independent = discoveryOnly(audit);
+  for (const property of independent ? audit.selected : audit.applied) {
+    assertKey(property.propertyId);
+    if (!independent) assertKey(property.essenceId);
+    if (!system?.properties[property.propertyId]
+      || (!independent && (!(property.macro === true || property.effects === true)
+        || system.properties[property.propertyId].essenceId !== property.essenceId))
       || !['special', 'matched'].includes(property.selectionType) || !Array.isArray(property.sources)) continue;
     const sources = property.sources.filter(source => {
       assertKey(source.componentId);
@@ -51,7 +57,7 @@ export function installCraftDiscovery({ hooks, getGame, data, logger = console }
   };
   const scan = () => {
     if (isActiveGM(getGame())) for (const actor of getGame().actors ?? []) for (const item of actor.items ?? []) {
-      if (item.flags?.skybricate?.application?.discoveryVersion === 1 && !item.flags?.skybricate?.discovery) discover(item);
+      if (supportedAudit(item.flags?.skybricate?.application) && !item.flags?.skybricate?.discovery) discover(item);
     }
   };
   const update = (item, change) => {

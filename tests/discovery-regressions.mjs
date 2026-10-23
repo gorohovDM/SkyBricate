@@ -112,3 +112,50 @@ test('turning transfer off preserves pending discovery earned by an earlier actu
   assert.deepEqual(f.known(), ['p']); assert.deepEqual(f.known('b'), ['p']);
   assert.equal(f.counters.writes, 1);
 });
+
+function independentFixture() {
+  const f = fixture(), audit = f.itemResult.flags.skybricate.application;
+  audit.discoveryVersion = 2; audit.transfer = false;
+  audit.selected = audit.applied.map(({ essenceId, macro, effects, ...property }) => property);
+  delete audit.applied; delete f.sky.systems.s.properties.p.essenceId;
+  f.transfer = false;
+  return f;
+}
+
+test('OFF discovery uses selected consumed properties without essence actions; scan, activeGM and receipts persist', async () => {
+  const f = independentFixture(); f.game.users.activeGM = null;
+  await f.discover(); assert.deepEqual(f.known(), []);
+  f.transfer = true; f.game.users.activeGM = f.game.user;
+  f.handlers.get('updateUser')(); await f.service.settle();
+  assert.deepEqual(f.known(), ['p']); assert.deepEqual(f.known('b'), ['p']); assert.deepEqual(f.known('c'), []);
+  await f.data.setPropertyKnowledge('x', 's', 'a', 'p', false);
+  await f.discover(); await new DataStore({ getGame: () => f.game }).discoverCraftKnowledge(f.itemResult);
+  assert.deepEqual(f.known(), []);
+});
+
+test('OFF audit requires its own version/mode marker, live assignments and distinct consumed sources', async () => {
+  for (const change of [
+    a => delete a.transfer, a => a.transfer = true, a => a.discoveryVersion = 1,
+    a => a.itemUuid = 'Actor.x.Item.clone', a => a.craftSuccess = false,
+    a => a.selected[0].sources.pop(),
+    a => a.selected[0].sources[1] = structuredClone(a.selected[0].sources[0]),
+    a => a.selected[0].sources[0].items[0].quantity = 0
+  ]) {
+    const f = independentFixture(); change(f.itemResult.flags.skybricate.application);
+    await f.discover(); assert.deepEqual(f.sky.knowledge, {});
+  }
+  const f = independentFixture(); f.sky.systems.s.components.b = [];
+  await f.discover(); assert.deepEqual(f.sky.knowledge, {});
+  const g = independentFixture(); g.sky.systems.s.specialComponents.c = ['p'];
+  const property = g.itemResult.flags.skybricate.application.selected[0];
+  property.selectionType = 'special'; property.sources = [{ componentId: 'c', assignmentType: 'special', items: [{ itemUuid: 'Item.c', quantity: 1, kind: 'extra' }] }];
+  await g.discover(); assert.deepEqual(g.known('c'), ['p']); assert.deepEqual(g.known(), []);
+});
+
+test('OFF discovery rereads assignments and award identity after asynchronous receipt writes', async () => {
+  for (const mutate of [f => f.sky.systems.s.components.b = [], f => f.itemResult.flags.skybricate.application.outcomeId = 'changed']) {
+    const f = independentFixture(); const native = f.itemResult.update;
+    f.itemResult.update = async function (patch) { await native.call(this, patch); mutate(f); };
+    await f.discover(); assert.deepEqual(f.sky.knowledge, {});
+  }
+});

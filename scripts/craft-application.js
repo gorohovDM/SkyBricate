@@ -45,13 +45,38 @@ export function consumedSelection(attempt, consumedItems) {
   });
 }
 
-export function installResultApplication(scope, { system, sky, attempt, resolveUuid }) {
+export function installResultApplication(scope, { system, sky, transfer = true, attempt, resolveUuid }) {
   const nativeSingle = scope._createSingleResult;
   const pending = [];
   if (typeof nativeSingle !== 'function') return async () => {}; // Capture-only engines do not award Items.
   scope._createSingleResult = async function (...args) {
     const [actor, result, consumedItems, , recipe] = args;
     const options = args[6] ?? {}, selected = consumedSelection(attempt(), consumedItems);
+    if (!transfer) {
+      // Keep stock essence inputs/effects/macros. Like transfer-enabled awards,
+      // discoveries need their own Item so pending provenance/receipts cannot be
+      // overwritten by another award on a shared inventory stack.
+      const receiver = Object.create(this), nativeMacros = this._runEssencePropertyMacros;
+      receiver._runEssencePropertyMacros = async function (itemData, ...macroArgs) {
+        if (itemData.flags?.skybricate) {
+          delete itemData.flags.skybricate.application;
+          delete itemData.flags.skybricate.discovery;
+        }
+        const applied = await nativeMacros.call(this, itemData, ...macroArgs);
+        return applied || selected.length > 0;
+      };
+      const item = await nativeSingle.apply(receiver, args);
+      if (item && selected.length) pending.push({ item, finalize: async nativeResult => {
+        if (nativeResult.success !== true || !Array.from(actor.items ?? []).includes(item)) return;
+        const context = attempt();
+        const audit = { version: 1, discoveryVersion: 2, transfer: false, itemUuid: item.uuid,
+          craftingSystemId: context.craftingSystemId, recipeId: context.recipeId,
+          resultId: result.id ?? null, actorUuid: actor.uuid, checkSuccess: context.checkResult.success === true,
+          craftSuccess: true, outcomeId: context.outcomeId, selected };
+        await item.update({ 'flags.skybricate.application': audit });
+      } });
+      return item;
+    }
     const linkedIds = new Set(Object.values(sky.properties).map(property => property.essenceId).filter(Boolean));
     const nativeContext = this._buildEssenceContext(consumedItems, recipe, options.precomputedEssences, options.resolveComponent);
     // Independent stock essences keep quantities/library order, followed by Sky

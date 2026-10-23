@@ -67,6 +67,7 @@ try {
         const id = `created${++sequence}`, document = { ...structuredClone(value), id, uuid: `Actor.actor.Item.${id}`, parent: actor,
           effects: (value.effects ?? []).map(effect => ({ ...structuredClone(effect), id: `base${++sequence}` })) };
         if (runtime.normalize) runtime.normalize(document);
+        document.getFlag = (namespace, key) => getProperty(document.flags?.[namespace], key);
         document.toObject = () => Object.fromEntries(Object.entries(document).filter(([key, row]) => key !== 'parent' && typeof row !== 'function'));
         document.update = async patch => { counters.auditUpdates++; for (const [path, row] of Object.entries(patch)) setProperty(document, path, row); return document; };
         document.createEmbeddedDocuments = async (type, rows) => {
@@ -146,16 +147,16 @@ try {
   // Explicitly disable the rule: native behaviours remain independent of Sky.
   for (const mode of ['simple', 'alchemy']) {
     const f = fixture({ mode }); f.runtime.transfer = false;
-    const discovery = enableDiscovery(f), before = structuredClone(f.sky);
+    const discovery = enableDiscovery(f);
     delete f.sky.systems.s.properties.p.essenceId;
     f.system.features.essences = false; f.system.features.propertyMacros = false; f.system.features.effectTransfer = false;
     const result = mode === 'alchemy' ? await f.brew(['a', 'b']) : await f.craft();
     assert.equal(result.success, true); assert.equal(f.counters.consumes, 1);
     assert.equal(result.results[0].system.power, undefined); assert.equal(f.counters.macroCalls, 0);
-    assert.equal(f.counters.effects, 0); assert.equal(f.counters.auditUpdates, 0);
-    assert.equal(result.results[0].flags?.skybricate?.application, undefined);
-    assert.deepEqual(f.captures, [null]); await discovery.service.settle();
-    assert.deepEqual(f.sky.knowledge, before.knowledge);
+    assert.equal(f.counters.effects, 0); await discovery.service.settle();
+    assert.equal(result.results[0].flags.skybricate.application.discoveryVersion, 2);
+    assert.equal(f.captures[0].transfer, false);
+    assert.deepEqual(discovery.known('a'), ['p']); assert.deepEqual(discovery.known('b'), ['p']);
   }
   {
     const f = fixture(); f.runtime.transfer = false;
@@ -164,7 +165,7 @@ try {
     f.runtime.macros['Macro.result'] = 'return {"system.result":9};';
     const result = await f.craft();
     assert.equal(result.results[0].system.power, 2); assert.equal(result.results[0].system.result, 9);
-    assert(f.counters.effects > 0); assert.equal(f.counters.auditUpdates, 0); assert.deepEqual(f.captures, [null]);
+    assert(f.counters.effects > 0); assert.equal(f.counters.auditUpdates, 1); assert.equal(f.captures[0].transfer, false);
   }
 
   let f = fixture(); rolls = 0;
@@ -436,7 +437,7 @@ try {
     }
     assert.equal((await f.craft()).disposition, 'timed-start');
     const active = f.engine.craftingRunManager.getActiveRuns(f.actor)[0];
-    assert.equal(!!active.skybricate, initial);
+    assert(active.skybricate); if (!initial) { assert.equal(active.skybricate.version, 2); assert.equal(active.skybricate.transfer, false); }
     if (initial) { assert.equal(active.skybricate.version, 1); assert.equal(active.skybricate.transfer, undefined); }
     f.runtime.transfer = !initial; if (reload) f.reload(); f.game.time.worldTime = 60;
     assert.equal((await f.craft()).disposition, 'skybricate-configuration');
@@ -444,7 +445,7 @@ try {
     f.runtime.transfer = initial; f.reload();
     const finished = await f.craft(); assert.equal(finished.success, true);
     assert.equal(f.counters.consumes, 1); assert.equal(rolls, 1);
-    assert.equal(f.counters.auditUpdates, initial ? 1 : 0);
+    assert.equal(f.counters.auditUpdates, 1);
   }
 
   f = fixture({ runs: true, quantities: [1, 1] }); timed(f); configure(f, { outcomeStrengths: { pass: 3, fail: 0.5 } }); rolls = 0;
@@ -527,8 +528,8 @@ try {
       return nativeCheck.apply(this, args);
     };
     crafted = await f.craft(); assert.equal(crafted.success, true); assert.equal(count, 2);
-    assert.equal(f.counters.consumes, 2); assert.equal(f.counters.auditUpdates, initial ? 2 : 0);
-    assert(f.captures.every(attempt => (attempt !== null) === initial));
+    assert.equal(f.counters.consumes, 2); assert.equal(f.counters.auditUpdates, 2);
+    assert(f.captures.every(attempt => attempt.transfer === initial));
   }
   for (const collapsed of [false, true]) for (const mixed of [false, true]) {
     f = fixture({ runs: true, quantities: [3, 3] }); steps(f, { collapsed, mixed }); rolls = 0;
@@ -648,6 +649,102 @@ try {
     if (!collapsed) { f.reload(); rollTotal = 1; await f.craft(); await discovery.service.settle(); rollTotal = 17; assert.deepEqual(discovery.known('a'), ['p']); }
     assert.equal(f.warnings.length, 0, JSON.stringify(f.warnings));
   }
+
+  // With transfer disabled, discovery follows stock consumption and awards in
+  // every supported path, without any linked essences or executable behaviour.
+  const withoutTransfer = f => {
+    f.runtime.transfer = false; delete f.sky.systems.s.properties.p.essenceId;
+    f.system.features.essences = false; f.system.features.propertyMacros = false; f.system.features.effectTransfer = false;
+    f.recipe.transferEffects = false;
+  };
+  for (const mode of ['simple', 'alchemy', 'progressive']) for (const delayed of [false, true]) {
+    f = fixture({ mode, runs: true, quantities: [1, 1] }); withoutTransfer(f);
+    const discovery = enableDiscovery(f);
+    f.runtime.sourceFlags = { skybricate: { discovery: { version: 1 }, application: { discoveryVersion: 2, transfer: false, itemUuid: 'old' } } };
+    if (mode === 'progressive') {
+      f.system.craftingCheck.progressive = { rollFormula: '1d20', awardMode: 'equal' };
+      f.system.components.find(row => row.id === 'result').difficulty = 10;
+      f.recipe.resultGroups = [f.recipe.resultGroups[0]]; f.recipe.outcomeRouting = {};
+    }
+    rolls = 0;
+    if (delayed) {
+      timed(f); assert.equal((await f.craft()).disposition, 'timed-start');
+      await f.craft(); await discovery.service.settle(); assert.deepEqual(discovery.known('a'), []); assert.equal(rolls, 0);
+      f.reload(); f.game.time.worldTime = 60;
+    }
+    crafted = mode === 'alchemy' && !delayed ? await f.brew(['a', 'b']) : await f.craft();
+    await discovery.service.settle(); assert.equal(crafted.success, true); assert.equal(rolls, 1); assert.equal(f.counters.consumes, 1);
+    assert.deepEqual(discovery.known('a'), ['p']); assert.deepEqual(discovery.known('b'), ['p']);
+    assert.equal(audit(crafted).discoveryVersion, 2); assert.equal(audit(crafted).selected[0].essenceId, undefined);
+    assert.equal(crafted.results[0].system.power, undefined); assert.equal(f.counters.effects, 0);
+    assert.equal(f.warnings.length, 0, JSON.stringify(f.warnings));
+  }
+  for (const collapsed of [false, true]) for (const mixed of [false, true]) {
+    f = fixture({ runs: true, quantities: [3, 3] }); withoutTransfer(f); steps(f, { collapsed, mixed });
+    const discovery = enableDiscovery(f);
+    if (mixed) { await f.craft(); await discovery.service.settle(); assert.deepEqual(discovery.known('a'), []); f.reload(); f.game.time.worldTime = collapsed ? 120 : 60; }
+    await f.craft(); await discovery.service.settle(); assert.deepEqual(discovery.known('a'), ['p']);
+    if (!collapsed) {
+      await discovery.data.setPropertyKnowledge('actor', 's', 'a', 'p', false);
+      if (mixed) { await f.craft(); f.reload(); f.game.time.worldTime = 120; }
+      await f.craft(); await discovery.service.settle(); assert.deepEqual(discovery.known('a'), ['p']);
+    }
+    assert.equal(f.warnings.length, 0, JSON.stringify(f.warnings));
+  }
+  for (const failure of ['rolled', 'creation', 'effect', 'chat', 'limit', 'cancel', 'empty', 'same-component']) {
+    f = fixture(failure === 'same-component' ? { groups: ['a', 'a'], quantities: [2] } : {}); withoutTransfer(f);
+    const discovery = enableDiscovery(f);
+    if (failure === 'rolled') rollTotal = 1;
+    if (failure === 'creation') f.runtime.createThrows = true;
+    if (failure === 'effect') { f.system.features.essences = true; f.system.features.effectTransfer = true; f.recipe.transferEffects = true; f.system.components[0].essences = { e: 1 }; f.runtime.effectThrows = true; }
+    if (failure === 'chat') f.engine._postCraftChatMessage = async () => { throw new Error('chat'); };
+    if (failure === 'limit') configure(f, { limitByCheck: true, outcomeLimits: { pass: 0, fail: 0 } });
+    if (failure === 'cancel') f.engine._runCraftingCheck = async () => ({ success: false, cancelled: true });
+    if (failure === 'empty') f.runtime.createEmpty = true;
+    try { await f.craft(); } catch (error) { assert(['creation', 'effect', 'chat'].includes(failure), error.message); }
+    await discovery.service.settle(); assert.deepEqual(discovery.known('a'), [], failure); rollTotal = 17;
+  }
+  for (const kind of ['special', 'limit', 'allowed', 'alchemy-extra']) {
+    f = fixture(kind === 'special' ? { groups: ['a'] } : kind === 'alchemy-extra' ? { mode: 'alchemy', quantities: [1, 1, 1] } : {}); withoutTransfer(f);
+    const discovery = enableDiscovery(f);
+    if (kind === 'special') { f.sky.systems.s.components.a = []; f.sky.systems.s.specialComponents.a = ['p']; configure(f, { prioritySpecial: true }); }
+    if (kind === 'limit' || kind === 'allowed') {
+      f.sky.systems.s.properties.other = { name: 'Unselected', description: '' };
+      for (const id of ['a', 'b']) f.sky.systems.s.components[id].push('other');
+      configure(f, kind === 'limit' ? { propertyOrder: ['p'], limitByCheck: true, outcomeLimits: { pass: 1, fail: 0 } } : { allowedPropertyIds: ['p'] });
+    }
+    if (kind === 'alchemy-extra') f.sky.systems.s.components.b = [];
+    crafted = kind === 'alchemy-extra' ? await f.brew(['a', 'b', 'c']) : await f.craft();
+    await discovery.service.settle(); assert.deepEqual(discovery.known('a'), ['p']);
+    assert.deepEqual(discovery.known('b'), kind === 'special' || kind === 'alchemy-extra' ? [] : ['p']);
+    assert.deepEqual(discovery.known('c'), kind === 'alchemy-extra' ? ['p'] : []);
+  }
+  // Eligible results own their audit/receipt even when native rules would stack.
+  // Empty selections keep stock stacking. Old delivery cannot unhide knowledge.
+  f = fixture({ quantities: [3, 3] }); withoutTransfer(f); discovery = enableDiscovery(f);
+  f.recipe.resultGroups[0].results.push(Object.assign(Object.create(Object.getPrototypeOf(f.recipe.resultGroups[0].results[0])), f.recipe.resultGroups[0].results[0], { id: 'second' }));
+  crafted = await f.craft(); await discovery.service.settle(); const firstItem = crafted.results[0];
+  assert.equal(f.counters.creates, 2); assert.equal(crafted.results.length, 2); assert.equal(firstItem.system.quantity, 1);
+  await discovery.data.setPropertyKnowledge('actor', 's', 'a', 'p', false);
+  discovery.handlers.get('updateItem')(firstItem, { 'flags.skybricate.application': audit(crafted) });
+  await discovery.service.settle(); assert.deepEqual(discovery.known('a'), []);
+  crafted = await f.craft(); await discovery.service.settle();
+  assert.notEqual(crafted.results[0], firstItem); assert.equal(f.counters.creates, 4); assert.deepEqual(discovery.known('a'), ['p']);
+  f = fixture({ quantities: [3, 3] }); withoutTransfer(f); configure(f, { allowedPropertyIds: [] });
+  crafted = await f.craft(); const offPlain = crafted.results[0]; crafted = await f.craft();
+  assert.equal(crafted.results[0], offPlain); assert.equal(f.counters.creates, 1); assert.equal(offPlain.system.quantity, 2); assert.equal(audit(crafted), undefined);
+  // Absent activeGM cannot lose either of two successive awards with different
+  // property sets. Their Items remain independent until discovery scans them.
+  f = fixture({ quantities: [3, 3, 3] }); withoutTransfer(f); discovery = enableDiscovery(f); f.game.users.activeGM = null;
+  await f.craft();
+  f.sky.systems.s.properties.other = { name: 'Other', description: '' };
+  f.sky.systems.s.components.a.push('other'); f.sky.systems.s.components.c.push('other');
+  configure(f, { allowedPropertyIds: ['other'] });
+  f.recipe.ingredientSets[0].ingredientGroups[1].options[0].match.componentId = 'c';
+  await f.craft();
+  f.game.users.activeGM = f.game.user; discovery.handlers.get('updateUser')(); await discovery.service.settle();
+  assert.deepEqual(discovery.known('a'), ['p', 'other']); assert.deepEqual(discovery.known('b'), ['p']);
+  assert.deepEqual(discovery.known('c'), ['other']); assert.equal(f.counters.creates, 2);
 
   // Verify the underlying STOCK seams separately from the runtime integration:
   // one precomputed selected map drives BOTH paths; a local

@@ -19,8 +19,8 @@ export function runRevision(system, sky, recipe) {
   return fingerprint([definition, sky, recipe.toJSON?.() ?? recipe]);
 }
 
-export function runBinding(actor, recipe, revision, run) {
-  return { version: 1, actorUuid: actor.uuid, recipeId: recipe.id,
+export function runBinding(actor, recipe, revision, run, transfer = true) {
+  return { ...(transfer ? { version: 1 } : { version: 2, transfer: false }), actorUuid: actor.uuid, recipeId: recipe.id,
     craftingSystemId: recipe.craftingSystemId, runId: run.id, revision };
 }
 
