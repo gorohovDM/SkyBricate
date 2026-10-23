@@ -47,7 +47,7 @@ try {
 
   function fixture({ mode = 'simple', checkMode = 'simple', quantities = [3, 1], groups = ['a', 'b'], configured = true, runs = false } = {}) {
     const counters = { updates: 0, deletes: 0, creates: 0, auditUpdates: 0, effectCalls: 0, effects: 0, macroCalls: 0, selections: 0, consumes: 0 }, captures = [], warnings = [];
-    const runtime = { macros: { 'Macro.e': 'return {"system.power": context.essenceQuantity};' },
+    const runtime = { transfer: true, macros: { 'Macro.e': 'return {"system.power": context.essenceQuantity};' },
       effects: [{ name: 'Effect', changes: [{ key: 'system.power', value: 1 }] }], sourceSystem: { quantity: 1 } };
     const actor = { id: 'actor', uuid: 'Actor.actor', name: 'Actor', items: [], getRollData: () => ({}) };
     const flags = {};
@@ -99,7 +99,7 @@ try {
     const sky = emptyData();
     if (configured) { sky.systems.s = emptySystem(); Object.assign(sky.systems.s, { properties: { p: { name: 'Secret property', description: '', essenceId: 'e' } }, components: { a: ['p'], b: ['p'], c: ['p'] } }); }
     globalThis.game = { user: { id: 'gm', isGM: true }, actors: [actor], time: { worldTime: 0 },
-      i18n: { localize: key => key, format: key => key }, settings: { get: () => null },
+      i18n: { localize: key => key, format: key => key }, settings: { get: (ns, key) => ns === 'skybricate' && key === 'transferPropertiesViaEssences' ? runtime.transfer : null },
       fabricate: { getCraftingSystemManager: () => systemManager, getRecipeManager: () => manager,
         getCraftingRunManager: () => engine.craftingRunManager, getResolutionModeService: () => resolution } };
     const game = globalThis.game;
@@ -124,7 +124,8 @@ try {
     f.game.modules = new Map([['fabricate', { active: true, version: '1.9.10' }]]);
     f.game.settings = {
       settings: new Map([['fabricate.craftingSystems', { scope: 'world', type: Array }]]),
-      get: ns => structuredClone(ns === 'skybricate' ? f.sky : [f.system]),
+      get: (ns, key) => ns === 'skybricate' && key === 'transferPropertiesViaEssences' ? f.runtime.transfer
+        : structuredClone(ns === 'skybricate' ? f.sky : [f.system]),
       set: async (ns, key, value) => { assert.equal(ns, 'skybricate'); Object.assign(f.sky, structuredClone(value)); }
     };
     const data = new DataStore({ getGame: () => f.game });
@@ -140,6 +141,30 @@ try {
       return items;
     };
     return { data, service, known: component => f.sky.knowledge.actor?.s?.[component] ?? [], handlers };
+  }
+
+  // Explicitly disable the rule: native behaviours remain independent of Sky.
+  for (const mode of ['simple', 'alchemy']) {
+    const f = fixture({ mode }); f.runtime.transfer = false;
+    const discovery = enableDiscovery(f), before = structuredClone(f.sky);
+    delete f.sky.systems.s.properties.p.essenceId;
+    f.system.features.essences = false; f.system.features.propertyMacros = false; f.system.features.effectTransfer = false;
+    const result = mode === 'alchemy' ? await f.brew(['a', 'b']) : await f.craft();
+    assert.equal(result.success, true); assert.equal(f.counters.consumes, 1);
+    assert.equal(result.results[0].system.power, undefined); assert.equal(f.counters.macroCalls, 0);
+    assert.equal(f.counters.effects, 0); assert.equal(f.counters.auditUpdates, 0);
+    assert.equal(result.results[0].flags?.skybricate?.application, undefined);
+    assert.deepEqual(f.captures, [null]); await discovery.service.settle();
+    assert.deepEqual(f.sky.knowledge, before.knowledge);
+  }
+  {
+    const f = fixture(); f.runtime.transfer = false;
+    f.system.components[0].essences = { e: 2 };
+    f.recipe.resultGroups[0].results[0].propertyMacroUuid = 'Macro.result';
+    f.runtime.macros['Macro.result'] = 'return {"system.result":9};';
+    const result = await f.craft();
+    assert.equal(result.results[0].system.power, 2); assert.equal(result.results[0].system.result, 9);
+    assert(f.counters.effects > 0); assert.equal(f.counters.auditUpdates, 0); assert.deepEqual(f.captures, [null]);
   }
 
   let f = fixture(); rolls = 0;
@@ -400,6 +425,28 @@ try {
     fixture.system.requirements.time.enabled = true;
     fixture.recipe.timeRequirement = { minutes: 1 };
   };
+  // Both mode transitions fail before spending/rolling, including after a
+  // manager reload. Legacy v1 Sky bindings have no mode field and remain ON.
+  for (const mode of ['simple', 'alchemy', 'progressive']) for (const initial of [false, true]) for (const reload of [false, true]) {
+    f = fixture({ runs: true, quantities: [1, 1], mode }); f.runtime.transfer = initial; timed(f); rolls = 0;
+    if (mode === 'progressive') {
+      f.system.craftingCheck.progressive = { rollFormula: '1d20', awardMode: 'equal' };
+      f.system.components.find(row => row.id === 'result').difficulty = 10;
+      f.recipe.resultGroups = [f.recipe.resultGroups[0]]; f.recipe.outcomeRouting = {};
+    }
+    assert.equal((await f.craft()).disposition, 'timed-start');
+    const active = f.engine.craftingRunManager.getActiveRuns(f.actor)[0];
+    assert.equal(!!active.skybricate, initial);
+    if (initial) { assert.equal(active.skybricate.version, 1); assert.equal(active.skybricate.transfer, undefined); }
+    f.runtime.transfer = !initial; if (reload) f.reload(); f.game.time.worldTime = 60;
+    assert.equal((await f.craft()).disposition, 'skybricate-configuration');
+    assert.equal(f.counters.consumes, 1); assert.equal(rolls, 0); assert.equal(f.counters.creates, 0);
+    f.runtime.transfer = initial; f.reload();
+    const finished = await f.craft(); assert.equal(finished.success, true);
+    assert.equal(f.counters.consumes, 1); assert.equal(rolls, 1);
+    assert.equal(f.counters.auditUpdates, initial ? 1 : 0);
+  }
+
   f = fixture({ runs: true, quantities: [1, 1] }); timed(f); configure(f, { outcomeStrengths: { pass: 3, fail: 0.5 } }); rolls = 0;
   assert.equal((await f.craft()).disposition, 'timed-start');
   assert.equal(f.counters.consumes, 1); assert.equal(rolls, 0); assert.equal(f.actor.items.length, 0);
@@ -470,6 +517,19 @@ try {
       { id: 'last', name: 'Last', ingredientSets: [set], resultGroups: fixture.recipe.resultGroups, timeRequirement: mixed ? { minutes: 1 } : null }
     ].map((row, index) => fixture.recipe._normalizeStep(row, index));
   };
+  // A live toggle inside the first asynchronous check cannot change the mode
+  // of a native collapsed chain. Subsequent top-level attempts read it afresh.
+  for (const initial of [false, true]) {
+    f = fixture({ runs: true, quantities: [3, 3] }); steps(f, { collapsed: true }); f.runtime.transfer = initial;
+    const nativeCheck = f.engine._runCraftingCheck; let count = 0;
+    f.engine._runCraftingCheck = async function (...args) {
+      if (++count === 1) f.runtime.transfer = !initial;
+      return nativeCheck.apply(this, args);
+    };
+    crafted = await f.craft(); assert.equal(crafted.success, true); assert.equal(count, 2);
+    assert.equal(f.counters.consumes, 2); assert.equal(f.counters.auditUpdates, initial ? 2 : 0);
+    assert(f.captures.every(attempt => (attempt !== null) === initial));
+  }
   for (const collapsed of [false, true]) for (const mixed of [false, true]) {
     f = fixture({ runs: true, quantities: [3, 3] }); steps(f, { collapsed, mixed }); rolls = 0;
     if (mixed) {
@@ -605,5 +665,5 @@ try {
   await receiver._transferEffects({ createEmbeddedDocuments: async (type, rows) => effects.push(...rows) }, [], f.recipe, selected, undefined, enabled);
   assert.deepEqual(macroCalls, [['e', 2]]); assert.equal(itemData.system.power, 2); assert.equal(effects.length, 1); assert.deepEqual(f.system, before);
   delete globalThis.__stockMacroProbe;
-  console.log('PASS stock 1.9.10: 9b/9c craft and persisted runs; stage 10 activeGM discovery from immediate/alchemy/progressive/timed/multistep/collapsed awards, source-clone receipts, negative awards/no-op/overwrite/limit/cancel/errors, manual hiding and duplicate delivery.');
+  console.log('PASS stock 1.9.10: optional transfer OFF/native behaviour, live mode snapshots, timed mode transitions/reload; 9b/9c craft and persisted runs; stage 10 activeGM discovery from immediate/alchemy/progressive/timed/multistep/collapsed awards, source-clone receipts, negative awards/no-op/overwrite/limit/cancel/errors, manual hiding and duplicate delivery.');
 } finally { await rm(temp, { recursive: true, force: true }); }

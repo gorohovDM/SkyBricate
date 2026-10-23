@@ -102,3 +102,13 @@ test('10 discovery write errors are isolated, receipt prevents retries after fai
   const g = fixture(); const service = installCraftDiscovery({ hooks: { on() {} }, getGame: () => g.game, data: g.data });
   await service.settle(); assert.deepEqual(g.known(), ['p']);
 });
+
+
+test('turning transfer off preserves pending discovery earned by an earlier actual award', async () => {
+  const f = fixture(); f.game.users.activeGM = null;
+  await f.discover(); assert.deepEqual(f.known(), []);
+  f.transfer = false;
+  f.game.users.activeGM = f.game.user; f.handlers.get('updateUser')(); await f.service.settle();
+  assert.deepEqual(f.known(), ['p']); assert.deepEqual(f.known('b'), ['p']);
+  assert.equal(f.counters.writes, 1);
+});

@@ -78,7 +78,7 @@
       "RevealKnowledge": "Reveal",
       "HideKnowledge": "Hide",
       "LinkedComponents": "Linked components",
-      "CraftPrerequisite": "To apply a property during crafting, link it to an enabled Fabricate essence. Enable essences and property macros with a working script macro, or effect transfer with an ActiveEffects source and transfer enabled in the recipe. Component assignments alone are insufficient.",
+      "CraftPrerequisite": "Only when the world setting Transfer properties via essences is enabled: link each selected property to an enabled Fabricate essence. Enable essences and property macros with a working script macro, or effect transfer with an ActiveEffects source and transfer enabled in the recipe. With transfer off, SkyBricate adds no crafting prerequisites.",
       "OpenKnowledgeError": "Could not open character property knowledge. Please try again."
     },
     "Player": {
@@ -122,7 +122,7 @@
       "Saved": "Recipe rules saved.",
       "InvalidLimit": "Enter a non-negative safe integer for every outcome.",
       "Unavailable": "This window lost its manager context or GM access. Reopen rules from the recipe row.",
-      "Strength": "Strength of each property (independent of count limit)",
+      "Strength": "Strength of each property (when essence transfer is enabled; independent of count limit)",
       "InvalidStrength": "Enter a positive finite strength for every outcome."
     },
     "Craft": {
@@ -131,7 +131,10 @@
       "EssenceRequired": "SkyBricate: a selected property needs a current enabled essence. Open SkyBricate properties and link an essence of this system.",
       "MacroUnavailable": "SkyBricate: the linked essence script macro is missing, unavailable or empty. Fix its macro in Fabricate.",
       "EffectUnavailable": "SkyBricate: the linked essence effect source is unavailable. Check its source Item or component.",
-      "BehaviourRequired": "SkyBricate: the linked essence has no enabled behaviour for this recipe. Enable essences and property macros with a script macro, or effect transfer with an ActiveEffects source and transfer enabled in the recipe."
+      "BehaviourRequired": "SkyBricate: the linked essence has no enabled behaviour for this recipe. Enable essences and property macros with a script macro, or effect transfer with an ActiveEffects source and transfer enabled in the recipe.",
+      "TransferSetting": "Transfer properties via essences",
+      "TransferSettingHint": "Off by default: native Fabricate crafting without applying SkyBricate properties or revealing knowledge. Enable to apply linked essence macros/effects. Changes affect new attempts; finish or cancel active runs in their original mode.",
+      "TransferModeChanged": "SkyBricate: this run started with a different property transfer mode. Restore the previous world setting to finish it, or cancel the run in Fabricate. This refusal does not spend ingredients again."
     }
   }
 }

@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 import { emptyData, emptySystem, readData, validateData } from '../scripts/data-model.js';
-import { DataStore } from '../scripts/data-store.js';
+import { DataStore, registerDataSetting, essenceTransferEnabled } from '../scripts/data-store.js';
 import { installCraftAdapter, getCraftAttempt } from '../scripts/craft-adapter.js';
 import { mountPropertyPanel } from '../scripts/property-panel.js';
 import { consumedSelection } from '../scripts/craft-application.js';
 import { fingerprint, runRevision, runBinding, validateRun } from '../scripts/craft-run-context.js';
 import { readFileSync } from 'node:fs';
 
-export function craftFixture({ resolveUuid } = {}) {
+export function craftFixture({ resolveUuid, transfer = true } = {}) {
   const sky = emptyData(), system = { id: 's', name: 'System', resolutionMode: 'simple',
     craftingCheck: { enabled: true, simple: { rollFormula: '1d20' } },
     features: { essences: true, propertyMacros: true, effectTransfer: true },
@@ -25,7 +25,8 @@ export function craftFixture({ resolveUuid } = {}) {
   const game = { user: { isGM: true }, modules: new Map([['fabricate', { active: true, version: '1.9.10' }]]),
     fabricate: { getCraftingSystemManager: () => ({ getSystem: () => system }) }, settings: {
       settings: new Map([['fabricate.craftingSystems', { scope: 'world', type: Array }]]),
-      get: (ns) => structuredClone(ns === 'skybricate' ? stored : [system]),
+      get: (ns, key) => ns === 'skybricate' && key === 'transferPropertiesViaEssences' ? transfer
+        : structuredClone(ns === 'skybricate' ? stored : [system]),
       set: async (ns, key, value) => { assert.equal(ns, 'skybricate'); stored = structuredClone(value); counters.writes++; }
     } };
   const recipe = { id: 'r', craftingSystemId: 's', transferEffects: false, getExecutionSteps: () => [{}] };
@@ -43,6 +44,7 @@ export function craftFixture({ resolveUuid } = {}) {
     },
     async craftAlchemy(actor, sources, submissions, options = {}) {
       if (options.noMatch) { counters.consumes++; return { success: false, disposition: 'no-match' }; }
+      await options.beforeCraft?.();
       return this.craft(actor, sources, recipe, null, { ...options, isAlchemyAttempt: true, alchemySubmittedItems: submissions.map(row => row.item) });
     },
     _resolveCraftSelection: () => ({ plan: [{ item: a, quantity: 1 }, { item: b, quantity: 1 }] }),
@@ -54,6 +56,7 @@ export function craftFixture({ resolveUuid } = {}) {
     resolveUuid: resolveUuid ?? (async uuid => uuid.startsWith('Macro') ? { type: 'script', command: 'return {};' } : { effects: [{ changes: [{}] }] }),
     logger: { warn: (...args) => warnings.push(args) } });
   return { game, system, recipe, engine, actor, a, b, data, captures, counters, warnings, dispose, item,
+    get transfer() { return transfer; }, set transfer(value) { transfer = value; },
     get sky() { return stored; }, set sky(value) { stored = value; }, set check(value) { check = value; },
     craft: options => engine.craft(actor, [actor], recipe, null, options) };
 }
@@ -264,4 +267,60 @@ test('GM property editor selects essence of current system; removed links surviv
   f.sky.systems.s.properties.p.essenceId = 'removed'; target.querySelector('[data-sky-action="refresh"]').click(); target.querySelector('[data-sky-action="edit"]').click();
   assert.equal(target.querySelector('[data-sky-field="essenceId"]').value, 'removed');
   panel.dispose(); window.happyDOM.abort();
+});
+
+test('essence transfer registers a visible Boolean world setting defaulting off and reads strictly true', () => {
+  const registrations = [];
+  registerDataSetting({ register: (...args) => registrations.push(args) });
+  const [ns, key, config] = registrations.find(([, key]) => key === 'transferPropertiesViaEssences');
+  assert.equal(ns, 'skybricate'); assert.equal(config.scope, 'world'); assert.equal(config.config, true);
+  assert.equal(config.type, Boolean); assert.equal(config.default, false);
+  for (const value of [undefined, false, 0, 1, 'true', {}, true]) {
+    const game = { settings: { get: (namespace, name) => { assert.equal(namespace, ns); assert.equal(name, key); return value; } } };
+    assert.equal(essenceTransferEnabled(game), value === true);
+  }
+  for (const language of ['en', 'ru']) {
+    const strings = JSON.parse(readFileSync(new URL('../lang/'+language+'.json', import.meta.url), 'utf8')).SKYBRICATE.Craft;
+    for (const key of ['TransferSetting', 'TransferSettingHint', 'TransferModeChanged']) assert(strings[key]?.trim());
+  }
+});
+
+test('transfer OFF passes basic and alchemy crafting through without Sky prerequisites, attempts or data reads', async () => {
+  for (const transfer of [undefined, false, 'true', 1]) {
+    const f = craftFixture({ transfer: false, resolveUuid: () => { throw new Error('Sky must not resolve essence actions'); } });
+    f.transfer = transfer;
+    delete f.sky.systems.s.properties.p.essenceId; f.system.features = {}; f.system.essenceDefinitions = [];
+    const before = structuredClone(f.sky);
+    f.data.getSnapshot = () => { throw new Error('OFF must not read Sky data'); };
+    assert.equal((await f.craft()).success, true);
+    assert.equal((await f.engine.craftAlchemy(f.actor, [f.actor], [{ item: f.a, componentId: 'a' }])).success, true);
+    assert.deepEqual(f.captures, [null, null]); assert.equal(f.counters.rolls, 2); assert.equal(f.counters.consumes, 2);
+    assert.equal(f.counters.writes, 0); assert.deepEqual(f.sky, before);
+  }
+});
+
+test('live transfer toggle affects new attempts and preserves current async check snapshot in either direction', async () => {
+  for (const initial of [false, true]) {
+    const f = craftFixture({ transfer: initial });
+    const check = f.engine._runCraftingCheck;
+    f.engine._runCraftingCheck = async function (...args) { f.transfer = !initial; return check.apply(this, args); };
+    await f.craft(); assert.equal(f.captures[0] !== null, initial);
+    f.engine._runCraftingCheck = check;
+    await f.craft(); assert.equal(f.captures[1] !== null, !initial);
+    assert.equal(f.counters.rolls, 2); assert.equal(f.counters.consumes, 2);
+  }
+  const f = craftFixture({ transfer: false }); delete f.sky.systems.s.properties.p.essenceId;
+  assert.equal((await f.craft()).success, true); f.transfer = true;
+  assert.equal((await f.craft()).disposition, 'skybricate-configuration');
+  assert.equal(f.counters.rolls, 1); assert.equal(f.counters.consumes, 1);
+});
+
+test('alchemy fixes transfer mode before native async work in either direction', async () => {
+  for (const initial of [false, true]) {
+    const f = craftFixture({ transfer: initial });
+    await f.engine.craftAlchemy(f.actor, [f.actor], [{ item: f.a, componentId: 'a' }, { item: f.b, componentId: 'b' }], {
+      beforeCraft: async () => { f.transfer = !initial; }
+    });
+    assert.equal(f.captures[0] !== null, initial); assert.equal(f.counters.consumes, 1);
+  }
 });
