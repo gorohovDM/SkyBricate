@@ -1,3 +1,4 @@
+import { essenceTransferEnabled } from './data-store.js';
 import { copy, assertKey } from './data-model.js';
 import { selectProperties } from './property-selection.js';
 import { recipeOutcomes, validateOutcomeLimits, outcomeStrength } from './recipe-contract.js';
@@ -111,14 +112,27 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
   if (methods.some(key => typeof engine[key] !== 'function')) throw new Error('Unsupported Fabricate crafting contract');
   const nativeCraft = engine.craft, nativeAlchemy = engine.craftAlchemy;
   const reject = error => { if (getGame().user?.isGM) logger.warn('SkyBricate | Craft preflight rejected:', error.message); return failed(getGame(), error); };
-  async function execute(receiver, args, submissions = null) {
+  async function execute(receiver, args, submissions = null, transfer = essenceTransferEnabled(getGame())) {
     const [actor, sources, recipe, , options = {}] = args;
     const runManager = engine.craftingRunManager || getGame().fabricate.getCraftingRunManager?.();
     let run = options.runId ? runManager?.getActiveRun?.(actor, options.runId) : runManager?.findActiveRunForRecipe?.(actor, recipe.id);
+    const passThrough = () => {
+      const scope = Object.create(receiver);
+      scope.craft = (...nextArgs) => execute(scope, nextArgs, null, transfer);
+      return nativeCraft.apply(scope, args);
+    };
     let sky, rules, system, revision, prepared;
     try {
+      // Legacy v1 bindings denote transfer-enabled runs. Native runs have no
+      // Sky context. A partial Sky context must not bypass the mode guard.
+      const skyRun = !!run?.skybricate || run?.steps?.some(step => !!step.skybricate);
+      if (!transfer) {
+        if (skyRun) throw configurationError('TransferModeChanged', 'Restore the run transfer mode before continuing');
+        return passThrough();
+      }
       sky = data.getSnapshot().systems[recipe?.craftingSystemId];
-      if (!configured(sky, recipe.id) && !run?.skybricate) return nativeCraft.apply(receiver, args);
+      if (!configured(sky, recipe.id) && !run?.skybricate) return passThrough();
+      if (run && !skyRun) throw configurationError('TransferModeChanged', 'Restore the run transfer mode before continuing');
       if (!sky) throw new Error('Missing SkyBricate configuration');
       const liveSystem = getGame().fabricate.getCraftingSystemManager().getSystem(recipe.craftingSystemId);
       system = liveSystem && copy(liveSystem.toJSON?.() ?? liveSystem);
@@ -133,7 +147,7 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
     const scope = Object.create(engine);
     // Collapsed chains recurse through craft. Start a fresh receiver for each
     // step rather than nesting the previous step's selection/check wrappers.
-    scope.craft = (...nextArgs) => execute(engine, nextArgs);
+    scope.craft = (...nextArgs) => execute(engine, nextArgs, null, transfer);
     let rows = prepared?.composition ?? null, links = null;
     const nativeSelection = engine._resolveCraftSelection, nativeCheck = engine._runCraftingCheck;
     const preflight = async () => {
@@ -240,8 +254,9 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
   }
   const craft = function (...args) { return execute(this, args); };
   const alchemy = function (...args) {
+    const transfer = essenceTransferEnabled(getGame());
     const scope = Object.create(this), submissions = args[2]?.map(row => ({ item: row.item, componentId: row.componentId }));
-    scope.craft = (...craftArgs) => execute(scope, craftArgs, submissions);
+    scope.craft = (...craftArgs) => execute(scope, craftArgs, submissions, transfer);
     return nativeAlchemy.apply(scope, args);
   };
   engine.craft = craft; engine.craftAlchemy = alchemy;

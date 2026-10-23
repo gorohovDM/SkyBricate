@@ -6,6 +6,8 @@ import { discoveryContext, discoverySources, isActiveGM } from './craft-discover
 
 export const SETTING_NAMESPACE = "skybricate";
 export const SETTING_KEY = "data";
+export const TRANSFER_SETTING_KEY = "transferPropertiesViaEssences";
+export const essenceTransferEnabled = game => game.settings.get(SETTING_NAMESPACE, TRANSFER_SETTING_KEY) === true;
 export const SPECIAL_SETTING_KEY = "showSpecialProperties";
 export const specialPropertiesEnabled = game => game.settings.get(SETTING_NAMESPACE, SPECIAL_SETTING_KEY) === true;
 const specialSettingListeners = new Set();
@@ -21,6 +23,10 @@ export function subscribeSpecialSetting(listener) {
 }
 
 export function registerDataSetting(settings) {
+  settings.register(SETTING_NAMESPACE, TRANSFER_SETTING_KEY, {
+    name: "SKYBRICATE.Craft.TransferSetting", hint: "SKYBRICATE.Craft.TransferSettingHint",
+    scope: "world", config: true, type: Boolean, default: false
+  });
   settings.register(SETTING_NAMESPACE, SPECIAL_SETTING_KEY, {
     name: "SKYBRICATE.Editor.SpecialSetting", hint: "SKYBRICATE.Editor.SpecialSettingHint",
     scope: "world", config: true, type: Boolean, default: false,

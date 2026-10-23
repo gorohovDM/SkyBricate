@@ -168,7 +168,7 @@ test("init registers a hidden world setting and API is exposed only after readin
   f.game.settings = storage.game.settings;
   f.game.modules.set("skybricate", {});
   f.hooks.fire("init");
-  assert.equal(storage.registrations.length, 2);
+  assert.equal(storage.registrations.length, 3);
   const [namespace, key, options] = storage.registrations.find(([, key]) => key === "data");
   assert.equal(namespace, "skybricate"); assert.equal(key, "data");
   assert.equal(options.scope, "world"); assert.equal(options.config, false); assert.equal(options.type, Object);
