@@ -285,16 +285,15 @@ test('essence transfer registers a visible Boolean world setting defaulting off 
   }
 });
 
-test('transfer OFF passes basic and alchemy crafting through without Sky prerequisites, attempts or data reads', async () => {
+test('transfer OFF captures property selection without essence prerequisites or behaviour resolution', async () => {
   for (const transfer of [undefined, false, 'true', 1]) {
     const f = craftFixture({ transfer: false, resolveUuid: () => { throw new Error('Sky must not resolve essence actions'); } });
     f.transfer = transfer;
     delete f.sky.systems.s.properties.p.essenceId; f.system.features = {}; f.system.essenceDefinitions = [];
     const before = structuredClone(f.sky);
-    f.data.getSnapshot = () => { throw new Error('OFF must not read Sky data'); };
-    assert.equal((await f.craft()).success, true);
-    assert.equal((await f.engine.craftAlchemy(f.actor, [f.actor], [{ item: f.a, componentId: 'a' }])).success, true);
-    assert.deepEqual(f.captures, [null, null]); assert.equal(f.counters.rolls, 2); assert.equal(f.counters.consumes, 2);
+    const basic = await f.craft(); assert.equal(basic.success, true, JSON.stringify([basic, f.warnings]));
+    assert.equal((await f.engine.craftAlchemy(f.actor, [f.actor], [{ item: f.a, componentId: 'a' }, { item: f.b, componentId: 'b' }])).success, true);
+    assert(f.captures.every(attempt => attempt.transfer === false && attempt.selected[0].propertyId === 'p' && !Object.hasOwn(attempt.selected[0], 'essenceId'))); assert.equal(f.counters.rolls, 2); assert.equal(f.counters.consumes, 2);
     assert.equal(f.counters.writes, 0); assert.deepEqual(f.sky, before);
   }
 });
@@ -304,9 +303,9 @@ test('live transfer toggle affects new attempts and preserves current async chec
     const f = craftFixture({ transfer: initial });
     const check = f.engine._runCraftingCheck;
     f.engine._runCraftingCheck = async function (...args) { f.transfer = !initial; return check.apply(this, args); };
-    await f.craft(); assert.equal(f.captures[0] !== null, initial);
+    await f.craft(); assert.equal(f.captures[0].transfer, initial);
     f.engine._runCraftingCheck = check;
-    await f.craft(); assert.equal(f.captures[1] !== null, !initial);
+    await f.craft(); assert.equal(f.captures[1].transfer, !initial);
     assert.equal(f.counters.rolls, 2); assert.equal(f.counters.consumes, 2);
   }
   const f = craftFixture({ transfer: false }); delete f.sky.systems.s.properties.p.essenceId;
@@ -321,6 +320,6 @@ test('alchemy fixes transfer mode before native async work in either direction',
     await f.engine.craftAlchemy(f.actor, [f.actor], [{ item: f.a, componentId: 'a' }, { item: f.b, componentId: 'b' }], {
       beforeCraft: async () => { f.transfer = !initial; }
     });
-    assert.equal(f.captures[0] !== null, initial); assert.equal(f.counters.consumes, 1);
+    assert.equal(f.captures[0].transfer, initial); assert.equal(f.counters.consumes, 1);
   }
 });

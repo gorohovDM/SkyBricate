@@ -126,10 +126,8 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
       // Legacy v1 bindings denote transfer-enabled runs. Native runs have no
       // Sky context. A partial Sky context must not bypass the mode guard.
       const skyRun = !!run?.skybricate || run?.steps?.some(step => !!step.skybricate);
-      if (!transfer) {
-        if (skyRun) throw configurationError('TransferModeChanged', 'Restore the run transfer mode before continuing');
-        return passThrough();
-      }
+      const runTransfer = run?.skybricate?.version === 2 && run.skybricate.transfer === false ? false : true;
+      if (skyRun && runTransfer !== transfer) throw configurationError('TransferModeChanged', 'Restore the run transfer mode before continuing');
       sky = data.getSnapshot().systems[recipe?.craftingSystemId];
       if (!configured(sky, recipe.id) && !run?.skybricate) return passThrough();
       if (run && !skyRun) throw configurationError('TransferModeChanged', 'Restore the run transfer mode before continuing');
@@ -140,7 +138,7 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
       rules = copy(sky.recipeRules[recipe.id] ?? {});
       validateOutcomeLimits(rules, recipeOutcomes(system));
       revision = runRevision(system, sky, recipe);
-      if (run) prepared = validateRun(run, runBinding(actor, recipe, revision, run), system);
+      if (run) prepared = validateRun(run, runBinding(actor, recipe, revision, run, transfer), system);
       const steps = recipe.getExecutionSteps?.() ?? [{}];
       if (!runManager && (steps.length > 1 || steps.some(step => step.timeRequirement))) throw new Error('Crafting run manager is required');
     } catch (error) { return reject(error); }
@@ -159,7 +157,7 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
       const candidates = [...new Map(selections.map(property => [property.propertyId, property])).values()];
       const behaviours = copy(system);
       if (prepared) for (const definition of behaviours.essenceDefinitions ?? []) definition.enabled = prepared.essenceEnabled[definition.id];
-      links = await validateBehaviours(scope, candidates, sky, behaviours, recipe, resolveUuid);
+      links = transfer ? await validateBehaviours(scope, candidates, sky, behaviours, recipe, resolveUuid) : [];
     };
     if (runManager) {
       const manager = Object.create(runManager);
@@ -171,7 +169,7 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
       };
       manager.createRun = async function (...createArgs) {
         run = await runManager.createRun(...createArgs);
-        run.skybricate = runBinding(actor, recipe, revision, run);
+        run.skybricate = runBinding(actor, recipe, revision, run, transfer);
         await runManager.updateRun(actor, run);
         return run;
       };
@@ -229,15 +227,15 @@ export function installCraftAdapter({ engine, getGame, data, resolveUuid = uuid 
         const selected = selectProperties({ system: sky, componentIds: rows.map(row => row.componentId).filter(Boolean), recipeRules: rules, outcome: outcomeId });
         const strength = outcomeStrength(rules, recipeOutcomes(system), outcomeId);
         attempts.set(scope, { craftingSystemId: recipe.craftingSystemId, recipeId: recipe.id,
-          actorUuid: actor.uuid, composition: copy(rows), checkResult: copy(check), outcomeId, strength,
+          actorUuid: actor.uuid, composition: copy(rows), checkResult: copy(check), outcomeId, strength, transfer,
           ...(prepared ? { essenceEnabled: copy(prepared.essenceEnabled) } : {}),
-          selected: selected.map(property => ({ ...property, essenceId: links.find(link => link.propertyId === property.propertyId).essenceId })) });
+          selected: selected.map(property => transfer ? { ...property, essenceId: links.find(link => link.propertyId === property.propertyId).essenceId } : property) });
       } catch (error) {
         return { ...reject(error), misconfigured: true };
       }
       return check;
     };
-    const finalize = installResultApplication(scope, { system, sky, attempt: () => attempts.get(scope), resolveUuid });
+    const finalize = installResultApplication(scope, { system, sky, transfer, attempt: () => attempts.get(scope), resolveUuid });
     if (typeof engine._postCraftChatMessage === 'function') {
       scope._postCraftChatMessage = async function (...chatArgs) {
         const posted = await engine._postCraftChatMessage.apply(this, chatArgs);
